@@ -1,0 +1,214 @@
+#!/bin/bash   
+#
+#	nucore update script v2.0
+#	Copyright 2017 Big Guys Pinball LLC.
+#	updated: 06.22.2017
+#
+
+command=$1
+usbdir=$2
+rerun_update=0
+
+echo 'Nucore USB update 2.0 running'
+echo '-----------------------------------------'
+
+if [ $command = 'copyfiles' ]
+	then
+		echo 'Copying files from USB'
+		
+		files=$(ls $usbdir/*.mp3 2> /dev/null | wc -l)
+		if [ "$files" != "0" ]
+			then 
+				echo 'mp3s found'
+				cp $usbdir/*.mp3 ../music
+			else
+				echo 'no mp3s found'
+		fi
+
+		if [ -f "$usbdir/nucoreLU" ]
+			then
+				echo 'library dependant nucore bin found'
+				cp -r -f $usbdir/nucoreLU ../download
+			else
+				echo 'no library dependant nucore bin found'	
+		fi	
+
+		if [ -f "$usbdir/nucore" ]
+			then
+				echo 'nucore update found'
+				cp $usbdir/nucore ../download
+			else
+				echo 'no nucore update found'	
+		fi
+	
+		if [ -f "$usbdir/run" ]
+			then
+				echo 'nucore launcher update found'
+				cp $usbdir/run ../download
+			else
+				echo 'no nucore launcher update found'
+		fi
+
+		if [ -f "$usbdir/n_update" ]
+			then
+				echo 'nucore update script found'
+				cp $usbdir/n_update ../download
+			else
+				echo 'no nucore update script found'
+		fi
+
+		if [ -f "$usbdir/leds.cfg" ]
+			then
+				echo 'LED config file found'
+				cp -f $usbdir/leds.cfg ../config
+			else
+				echo 'no LED config file found'
+		fi
+		
+		if [ -f "$usbdir/servers.txt" ]
+			then
+				echo 'servers.txt file found'
+				cp -f $usbdir/servers.txt ../config
+			else
+				echo 'no servers.txt file found'
+		fi
+
+		if [ -f "$usbdir/nts" ]
+			then
+				echo 'nts file found'
+				cp -f $usbdir/nts ../bin
+			else
+				echo 'no nts file found'
+		fi
+
+		if [ -d "$usbdir/libs" ]
+			then
+				echo 'library files found'
+				cp -r -f $usbdir/libs/* ../download
+			else
+				echo 'no library files found'
+		fi
+
+		if [ -f "$usbdir/swe1_load_screen_s0.bmp" ]
+			then
+				echo 'swe1 load screen file found'
+				cp -f $usbdir/swe1_load_screen_s0.bmp ../resources/load/swe1/swe1_load_screen_s0.bmp
+			else
+				echo 'no load screen file found'
+		fi
+
+		if [ -f "$usbdir/rfm_load_screen_s0.bmp" ]
+			then
+				echo 'rfm load screen file found'
+				cp -f $usbdir/rfm_load_screen_s0.bmp ../resources/load/rfm/rfm_load_screen_s0.bmp
+			else
+				echo 'no load screen file found'
+		fi
+
+		echo 'copying log files to usb'
+		cp -r ../logs $usbdir
+		
+	else 
+		
+		if [ $command = 'updatebin' ]
+		
+			then
+				echo 'Checking for file updates'
+
+				if [ -f "../download/n_update" ]
+					then
+						echo 'upgrading nucore usb update'
+					
+						if cp ../download/n_update ./ 
+							then
+							
+								echo 'copied new update file to bin dir'
+							
+								if rm ../download/n_update
+									then
+										rerun_update=1
+									else
+										echo 'remove update file failed'
+										
+								fi
+						fi
+
+					else
+
+						echo 'no update to n_update'
+
+						if [ -f "../download/nucore" ]
+							then
+								echo 'upgrading nucore'
+								cp ../download/nucore ./
+						fi
+
+						foundLibs=0
+
+						if [ -f "../download/libqemu.so" ]
+							then
+								echo 'installing nucore support libraries'
+								cp ../download/libqemu.so /usr/local/lib
+								foundLibs=1
+						fi
+
+						if [ -f "../download/libSFont.so" ]
+							then
+								echo 'installing nucore support libraries'
+								cp ../download/libSFont.so /usr/local/lib
+								foundLibs=1
+						fi
+
+						if [ -f "../download/libmpg123_player.so" ]
+							then
+								echo 'installing nucore support libraries'
+								cp ../download/libmpg123_player.so /usr/local/lib
+								foundLibs=1
+						fi
+
+						if [ $foundLibs = 1 ] 
+							then
+								echo 'Found new library objects. Registering objects and upgrading nucore is present'
+								echo '------------------------------------------------------------------------------'
+								echo 'running ldconfig'
+								cd /usr/local/lib 
+								ldconfig
+								cd -
+
+						fi
+
+						if [ -f "../download/nucoreLU" ]
+							then
+								echo 'upgrading nucore after ldconfig'
+								cp ../download/nucoreLU ./nucore
+						fi
+
+		
+						files=$(ls ../download/* 2> /dev/null | wc -l)
+
+						if [ "$files" != "0" ]
+							then
+								echo 'deleting temp files'
+								rm ../download/*
+							else
+								echo 'no files to delete'
+						fi
+				fi
+
+		fi
+fi
+
+sync
+
+if [ $rerun_update = 1 ]
+
+	then
+		echo 'Executing new update script'
+		echo ''
+		./n_update updatebin
+	else
+		echo '-----------------------------------------'
+		echo 'Done'
+		echo ''
+fi
+

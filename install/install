@@ -1,0 +1,147 @@
+#!/bin/bash 
+#
+#	Script name:	install
+#	Author name: 	Chuck Hess
+#	Date:		07.06.09
+#
+#	Description
+#	This install script installs all required libraries and copies required files. 
+#	It also creates a log file to show success or failure.
+#
+
+LOGFILE="/root/Desktop/nucore_install.log"
+DASHES="---------------------------------------------------------------------------------"
+DASHES2="================================================================================="
+ANYERROR=0
+INSTALLDIR="/root"
+
+#
+#	open log file
+#
+
+function startlogging 
+{
+  echo $DASHES2 >> $LOGFILE
+  echo "$0 started running at `date`" >> $LOGFILE
+  echo $DASHES2 >> $LOGFILE
+}
+
+#
+#	close log file
+#
+
+function stoplogging 
+{
+  echo "`date` [MESSAGE] $0 finished runnning" >> $LOGFILE
+  echo $DASHES >> $LOGFILE
+}
+
+#
+#	process command, report success to log file
+#
+
+function process 
+{
+  $1
+  if [ "$?" -ne "0" ]
+    then
+      echo "`date` [ERROR]   $1 failed to run." >> $LOGFILE
+      ANYERROR=1
+    else
+      echo "`date` [SUCCESS] $1 ran without error" >> $LOGFILE
+  fi
+}
+
+startlogging
+
+#
+#	Make sure user is root or exit
+#
+
+if [ "$(id -u)" != "0" ]; then
+   echo "[FATAL ERROR] - This script must be run as root" >> $LOGFILE
+   exit 1
+fi
+
+#
+#	Update computer and install libraries
+#
+
+echo "Nucore installation running. Do not close this window."
+
+process "cp -r ./ $INSTALLDIR"
+process "rm $INSTALLDIR/autorun"
+process "cd $INSTALLDIR/nucore"
+process "cd $INSTALLDIR/nucore/install"
+
+process "apt-get -y update"
+process "apt-get -y upgrade"
+process "apt-get -y install libsdl-mixer1.2"
+process "apt-get -y install libsdl-image1.2"
+process "apt-get -y install libstdc++5"
+process "apt-get -y install usbmount"
+
+process "cp -R ./libs/* /usr/local/lib"
+process "cp ./start/exec_nucore /etc/init.d/exec_nucore"
+process "cd /usr/local/lib"
+process "ln -s -f libltdl.so.3.1.4 libltdl.so.0"
+process "ln -s -f libltdl.so.3.1.4 libltdl.so"
+process "ln -s -f libmpg123.so.O.18.12 libmpg123.so"
+process "ln -s -f libmpg123.so.O.18.12 libmpg123.so.0"
+process "ln -s -f libSDL_mixer-1.2.so.0 libSDL_mixer.so"
+process "ln -s -f libSDL_mixer-1.2.so.0 libSDL_mixer-1.2.so.0"
+process "ln -s -f libftchipid.so.0.1.0 libftchipid.so"
+process "ln -s -f libftd2xx.so.0.4.15 libftd2xx.so"
+process "ldconfig"
+
+process "cd mpg123"
+process "ldconfig"
+
+#
+#	turn off gdm at start and start nucore instead
+#
+
+process "update-rc.d -f gdm remove"
+process "update-rc.d exec_nucore start 99 2 3 4 5 . "
+
+#
+#	add fb0 and hpet timer option to startup
+#
+
+if grep -q "vga=0x0311" /boot/grub/menu.lst
+then echo "vga=0x0311 already present" >> $LOGFILE
+else sed -e 's/quiet splash/force-hpet vga=0x0311/g' -i.bak /boot/grub/menu.lst 
+echo "fb0 and hpet added to menu.lst" >> $LOGFILE
+fi
+
+#
+#	modify usb mount to accept vfat (windows)
+#
+
+if grep -q "vfat ext2" /etc/usbmount/usbmount.conf
+then echo "VFAT already present" >> $LOGFILE
+else sed -e 's/ext2 ext3/vfat ext2 ext3/g' -i.bak /etc/usbmount/usbmount.conf
+echo "vfat added to usbmount.conf" >> $LOGFILE
+fi
+
+#
+#	report overall success
+#
+
+#make sure disc cache is committed
+sync
+
+echo $DASHES >> $LOGFILE
+  
+if [ "$ANYERROR" -ne "0" ]
+  then
+  echo "Nucore install encountered errors." >> $LOGFILE
+  echo "If this script is run more than once all lines that start with ln will produce an error." >> $LOGFILE
+  echo "This just means the links have already been installed." >> $LOGFILE
+  else
+  echo "Nucore install was a success." >> $LOGFILE
+fi
+
+stoplogging
+
+exit 0
