@@ -273,11 +273,10 @@ games alive stays supported.
 | RFM  | v2.50             | `pin2000_50070_0250_*`           |
 | RFM  | v2.60             | `pin2000_50070_0260_*`           |
 
-The bundles ship as **7-Zip archives** (7zip / `p7zip-full`
-recommended; `apt install p7zip-full`). nucore does **not** pick the
-"highest version" automatically — each game folder under `update/`
-is treated as the one and only firmware for that title. To install a
-community bundle:
+The bundles ship as self-extracting `.exe` files. nucore does **not**
+pick the "highest version" automatically — each game folder under
+`update/` is treated as the one and only firmware for that title. To
+install a community bundle:
 
 1. Pick the target folder for the game — `update/swe1_14/` for SWE1,
    `update/rfm_15/` for RFM. (Names like `swe1_14` / `rfm_15` are
@@ -289,7 +288,7 @@ community bundle:
    ```sh
    rm -rf update/swe1_14/*    # or update/rfm_15/* for RFM
    ```
-3. Open the community 7z archive, browse into whatever subfolder
+3. Open the community archive, browse into whatever subfolder
    contains the `pin2000_*` files plus `gamelist.txt` /
    `*_update.bin`, and extract those files **directly into** that
    now-empty `update/<game>` folder — flat, no nested directory.
@@ -299,6 +298,14 @@ community bundle:
 To return to the official Williams firmware, repeat with the original
 `swe1_14` / `rfm_15` payload (a fresh `git checkout -- update/` from
 a clean clone is the easiest way).
+
+> **About the `.exe` files on mypinballs.com.** Despite the
+> extension, the distributed bundles are plain archives — the `.exe`
+> wrapper is just a self-extractor for Windows. On Linux / macOS any
+> archive manager that understands the underlying format will list
+> and extract their contents directly; you do not need to run the
+> executable. Pick whatever extractor you already have installed and
+> point it at the `.exe`.
 
 ## `sigio_fix.so` — what it is, why it's mandatory on x86_64
 
