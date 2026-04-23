@@ -237,14 +237,50 @@ bundlex86/            i386 shared libraries the bundle ships
   indirect/           transitive deps + ld-linux.so.2
   asix/               ASIX libftchipid overlay (USB-to-serial cabinets)
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
-update/               *_update.bin per game (latest non-community)
+update/               *_update.bin per game (latest official Williams)
   swe1_14/            SWE1 update tree (active: 0150)
   rfm_15/             RFM  update tree (active: 0180)
+                      Newer post-Williams firmware (Jim Askey at
+                      mypinballs.com) is supported at runtime — drop the
+                      bundle directory in alongside these and it Just
+                      Works — but is not redistributed here. See the
+                      "Community updates" section below.
 resources/            UI overlays, jukebox, watermark, load screens
 config/               leds.cfg, pb2k.cfg, servers.txt
 music/                jukebox playlist landing zone (empty by default)
 install/              upstream nucore install assets (kept for reference)
 ```
+
+## Community updates (mypinballs.com)
+
+After Williams shipped the last official Pinball 2000 firmware in
+September 2003, the platform has continued to be maintained by
+**Jim Askey** at <https://mypinballs.com>. He produces newer firmware
+revisions for both titles that add bug fixes, audio fixes, new
+lighting / colour effects, and other gameplay refinements that the
+community has wanted for years.
+
+`nucore-portable` runs these bundles fine — they are **not**
+"unsupported." The only thing this repo does **not** do is
+redistribute the bundle files, at Jim's request. Please grab the
+latest builds from his site directly so the version numbers you see
+are always the current ones, and so the project that is keeping these
+games alive stays supported.
+
+| Game | Version | Bundle directory pattern              |
+|------|--------:|---------------------------------------|
+| SWE1 | v2.10   | `pin2000_50069_0210_*_B_10000000`     |
+| RFM  | v2.50   | `pin2000_50070_0250_*_B_10000000`     |
+| RFM  | v2.60   | `pin2000_50070_0260_*_B_10000000`     |
+
+To use them, drop the extracted bundle directory under `update/`
+alongside `swe1_14/` / `rfm_15/`. nucore picks the highest-versioned
+tree per game at startup, so the new bundle becomes "active" without
+any further configuration. The bundle directories themselves are
+gitignored so an accidental commit can never republish them.
+
+If you have an original cabinet, supporting Jim is also the way to
+get the hardware spares and licences you may need.
 
 ## `sigio_fix.so` — what it is, why it's mandatory on x86_64
 
