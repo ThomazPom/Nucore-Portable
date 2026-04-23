@@ -267,20 +267,38 @@ latest builds from his site directly so the version numbers you see
 are always the current ones, and so the project that is keeping these
 games alive stays supported.
 
-| Game | Version | Bundle directory pattern              |
-|------|--------:|---------------------------------------|
-| SWE1 | v2.10   | `pin2000_50069_0210_*_B_10000000`     |
-| RFM  | v2.50   | `pin2000_50070_0250_*_B_10000000`     |
-| RFM  | v2.60   | `pin2000_50070_0260_*_B_10000000`     |
+| Game | Community version | Files (inside the 7z) start with |
+|------|------------------:|----------------------------------|
+| SWE1 | v2.10             | `pin2000_50069_0210_*`           |
+| RFM  | v2.50             | `pin2000_50070_0250_*`           |
+| RFM  | v2.60             | `pin2000_50070_0260_*`           |
 
-To use them, drop the extracted bundle directory under `update/`
-alongside `swe1_14/` / `rfm_15/`. nucore picks the highest-versioned
-tree per game at startup, so the new bundle becomes "active" without
-any further configuration. The bundle directories themselves are
-gitignored so an accidental commit can never republish them.
+The bundles ship as **7-Zip archives** (7zip / `p7zip-full`
+recommended; `apt install p7zip-full`). nucore does **not** pick the
+"highest version" automatically — each game folder under `update/`
+is treated as the one and only firmware for that title. To install a
+community bundle:
 
-If you have an original cabinet, supporting Jim is also the way to
-get the hardware spares and licences you may need.
+1. Pick the target folder for the game — `update/swe1_14/` for SWE1,
+   `update/rfm_15/` for RFM. (Names like `swe1_14` / `rfm_15` are
+   just nucore's slot names; they keep the same name even after you
+   put a newer firmware inside.)
+2. **Wipe the contents of that folder.** Mixing files from two
+   different firmware versions is the most common cause of boot
+   failures.
+   ```sh
+   rm -rf update/swe1_14/*    # or update/rfm_15/* for RFM
+   ```
+3. Open the community 7z archive, browse into whatever subfolder
+   contains the `pin2000_*` files plus `gamelist.txt` /
+   `*_update.bin`, and extract those files **directly into** that
+   now-empty `update/<game>` folder — flat, no nested directory.
+4. Launch as usual. The game version printed on the boot screen
+   should now reflect the community firmware.
+
+To return to the official Williams firmware, repeat with the original
+`swe1_14` / `rfm_15` payload (a fresh `git checkout -- update/` from
+a clean clone is the easiest way).
 
 ## `sigio_fix.so` — what it is, why it's mandatory on x86_64
 
