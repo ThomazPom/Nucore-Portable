@@ -20,8 +20,8 @@ Thumbs.db
 # Community / post-Williams update bundles (Jim Askey @ mypinballs.com).
 # nucore-portable runs them fine but does not redistribute them — see
 # the "Community updates (mypinballs.com)" section in README.md.
-# Files are dropped flat into update/swe1_14/ or update/rfm_15/, so we
-# guard against committing them by their version-stamped filenames.
-update/*/pin2000_50069_0210_*
-update/*/pin2000_50070_0250_*
-update/*/pin2000_50070_0260_*
+# nucore loads one update at a time from the root of update/, so guard
+# against committing the version-stamped filenames there.
+update/pin2000_50069_0210_*
+update/pin2000_50070_0250_*
+update/pin2000_50070_0260_*

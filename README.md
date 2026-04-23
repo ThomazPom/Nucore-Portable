@@ -237,14 +237,13 @@ bundlex86/            i386 shared libraries the bundle ships
   indirect/           transitive deps + ld-linux.so.2
   asix/               ASIX libftchipid overlay (USB-to-serial cabinets)
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
-update/               *_update.bin per game (latest official Williams)
-  swe1_14/            SWE1 update tree (active: 0150)
-  rfm_15/             RFM  update tree (active: 0180)
+update/               *_update.bin (one update at a time — see below)
+  swe1_14/            SWE1 update tree (latest official Williams: 0150)
+  rfm_15/             RFM  update tree (latest official Williams: 0180)
                       Newer post-Williams firmware (Jim Askey at
-                      mypinballs.com) is supported at runtime — drop the
-                      bundle directory in alongside these and it Just
-                      Works — but is not redistributed here. See the
-                      "Community updates" section below.
+                      mypinballs.com) is supported at runtime — see
+                      the "Community updates" section below — but is
+                      not redistributed here.
 resources/            UI overlays, jukebox, watermark, load screens
 config/               leds.cfg, pb2k.cfg, servers.txt
 music/                jukebox playlist landing zone (empty by default)
@@ -273,31 +272,26 @@ games alive stays supported.
 | RFM  | v2.50             | `pin2000_50070_0250_*`           |
 | RFM  | v2.60             | `pin2000_50070_0260_*`           |
 
-The bundles ship as self-extracting `.exe` files. nucore does **not**
-pick the "highest version" automatically — each game folder under
-`update/` is treated as the one and only firmware for that title. To
-install a community bundle:
+nucore only loads **one** update at a time, and the `*_update.bin`
+file must sit at the **root** of `update/`. To install a community
+bundle:
 
-1. Pick the target folder for the game — `update/swe1_14/` for SWE1,
-   `update/rfm_15/` for RFM. (Names like `swe1_14` / `rfm_15` are
-   just nucore's slot names; they keep the same name even after you
-   put a newer firmware inside.)
-2. **Wipe the contents of that folder.** Mixing files from two
-   different firmware versions is the most common cause of boot
-   failures.
+1. Wipe the `update/` folder so no stale firmware files are left
+   behind. Mixing files from two different firmware versions is the
+   most common cause of boot failures.
    ```sh
-   rm -rf update/swe1_14/*    # or update/rfm_15/* for RFM
+   rm -rf update/*
    ```
-3. Open the community archive, browse into whatever subfolder
-   contains the `pin2000_*` files plus `gamelist.txt` /
-   `*_update.bin`, and extract those files **directly into** that
-   now-empty `update/<game>` folder — flat, no nested directory.
-4. Launch as usual. The game version printed on the boot screen
+2. Open the community archive, browse into whatever subfolder
+   contains the `*_update.bin` plus the `pin2000_*` files /
+   `gamelist.txt`, and extract those files **directly into** the
+   now-empty `update/` folder — flat, no nested per-game directory.
+3. Launch as usual. The game version printed on the boot screen
    should now reflect the community firmware.
 
 To return to the official Williams firmware, repeat with the original
-`swe1_14` / `rfm_15` payload (a fresh `git checkout -- update/` from
-a clean clone is the easiest way).
+payload (a fresh `git checkout -- update/` from a clean clone is the
+easiest way).
 
 > **About the `.exe` files on mypinballs.com.** Despite the
 > extension, the distributed bundles are plain archives — the `.exe`
