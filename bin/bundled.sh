@@ -58,6 +58,10 @@ case "$BINARY" in /*) ;; *) BINARY="$SCRIPT_DIR/$BINARY" ;; esac
 cd "$SCRIPT_DIR" || exit 1
 
 export AUDIODEV="${AUDIODEV:-sysdefault}"
+# Keep ALSA's dynamically loaded 32-bit PulseAudio modules inside the bundle.
+# Without this override libasound uses its compiled-in multiarch directory
+# (for example /usr/lib/i386-linux-gnu/alsa-lib), defeating portability.
+export ALSA_PLUGIN_DIR="$BUNDLE/alsa-lib"
 
 case "$MODE" in
     asix) LIBPATH="$BUNDLE/asix:$BUNDLE/direct:$BUNDLE/indirect" ;;
