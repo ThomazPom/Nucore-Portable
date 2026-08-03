@@ -26,7 +26,7 @@
  *
  *  4. Mix_OpenAudio wrap  — doubles the SDL_mixer chunk size (4096 → 8192 samples).
  *                           At 44100 Hz this gives ~186 ms of audio buffer headroom,
- *                           eliminating underruns caused by scheduling jitter.
+ *                           reducing underrun risk from scheduling jitter.
  *
  *  5. setpriority wrap    — silences the "can't set nice" error when already at the
  *                           desired priority level (harmless no-op if not root).
@@ -140,7 +140,7 @@ static void *thread_trampoline(void *p)
     /*
      * Boost child threads to SCHED_FIFO priority 10.
      * The audio callback thread will always preempt SCHED_OTHER work,
-     * preventing starvation that causes ALSA underruns.
+     * reducing starvation that can cause ALSA underruns.
      * Requires CAP_SYS_NICE (i.e. run with sudo).
      */
     if (audio_fixes_enabled) {
@@ -173,8 +173,8 @@ int pthread_create(pthread_t *t, const pthread_attr_t *attr,
  *
  * The binary requests 4096 samples @ 44100 Hz → 93 ms callback interval.
  * Doubling to 8192 → 186 ms gives the scheduler far more headroom and
- * eliminates underruns caused by the remaining jitter after the SIGIO fix.
- * Audio latency increases by ~93 ms, imperceptible for a pinball machine.
+ * gives more headroom against remaining jitter after the SIGIO fix.
+ * Audio latency increases by ~93 ms; that tradeoff should be tested in play.
  * ----------------------------------------------------------------------- */
 static int (*real_Mix_OpenAudio)(int, Uint16, int, int) = NULL;
 

@@ -266,7 +266,7 @@ The SDL implementation and the two shim halves are independent:
 | Native SDL 1.2 | audio only | `--no-reboot --no-sigio-shim` | Diagnose signal intervention; boot may fail |
 | Native SDL 1.2 | disabled | `--no-reboot --no-shim` | Experimental |
 | SDL 1.2 API on SDL 2 | enabled | `--no-reboot --sdl12-compat` | Experimental modernization |
-| SDL 1.2 API on SDL 2 | signal only | `--no-reboot --sdl12-compat --no-audio-shim` | Known to risk audio underruns |
+| SDL 1.2 API on SDL 2 | signal only | `--no-reboot --sdl12-compat --no-audio-shim` | Audio A/B diagnostic |
 | SDL 1.2 API on SDL 2 | audio only | `--no-reboot --sdl12-compat --no-sigio-shim` | Boot-safety experiment |
 | SDL 1.2 API on SDL 2 | disabled | `--no-reboot --sdl12-compat --no-shim` | Most experimental |
 
@@ -537,19 +537,23 @@ safety and audio stabilization:
    audio/render threads (where the handler isn't safe to run).
 4. **`Mix_OpenAudio` wrapper** — doubles the SDL_mixer chunk size from
    4096 → 8192 samples (~93 ms → ~186 ms of headroom at 44.1 kHz), so
-   the residual scheduling jitter on a stock desktop kernel can't
-   underrun the audio buffer. Latency cost is imperceptible for a
-   pinball cabinet.
+   scheduling jitter has more room before it can underrun the buffer.
+   The tradeoff is about 93 ms of additional buffering latency.
 5. **`setpriority` wrapper** — silences the spurious "can't set nice"
    error path the original binary takes when it's already at the
    requested priority.
 
 The signal protections (1, the signal-blocking half of 2, and 3) and audio
-protections are enabled by default with both native SDL 1.2 and SDL12-compat;
-both paths can underrun without the audio half. `--no-audio-shim` leaves only
-signal protection. `--no-sigio-shim` disables signal protection while leaving
-that mode's audio choice unchanged, and `--no-shim` disables the entire
-library for controlled A/B testing.
+protections are enabled by default with both native SDL 1.2 and SDL12-compat.
+Current SDL12-compat testing produced clean audio throughout gameplay; an ALSA
+underrun was seen only while the program was exiting, when the audio pipeline
+was already shutting down. That exit-only message is harmless. Native SDL 1.2
+has not yet had the same conclusive with/without-audio-shim comparison, so the
+README does not claim that either SDL path requires the audio half.
+
+`--no-audio-shim` leaves only signal protection. `--no-sigio-shim` disables
+signal protection while leaving that mode's audio choice unchanged, and
+`--no-shim` disables the entire library for controlled A/B testing.
 
 ### Rebuilding
 
