@@ -266,6 +266,39 @@ as historical binaries and are not selected by `start.sh`.
 
 The SDL implementation and the two shim halves are independent:
 
+#### Choosing an SDL implementation
+
+Neither SDL choice is universally "better"; they optimize for different
+risks.
+
+| | Native SDL 1.2 | SDL12-compat on SDL 2 |
+|---|---|---|
+| What runs | The original SDL 1.2 implementation Nucore was built and tested against | Nucore's unchanged SDL 1.2 calls translated at runtime to bundled SDL 2 |
+| Main advantage | Fewest behavioral changes: original timing, surfaces, input and fullscreen semantics | A maintained compatibility bridge to a newer video, audio and input implementation |
+| Modern-host potential | Predictable legacy behavior, but dependent on old SDL assumptions | Better fit for current display servers, audio stacks, controllers and SDL2 driver fixes without modifying Nucore |
+| Main risk | SDL 1.2 is obsolete and increasingly awkward on new desktops | Translation can subtly change timing, fullscreen, rendering, focus or input behavior |
+| Project status | Production default and the conservative cabinet choice | Experimental, promising, and easy to test side by side |
+
+SDL12-compat is not a port of Nucore to SDL 2: the game still calls the SDL
+1.2 API it knows. The compatibility library implements that ABI using SDL 2
+underneath. This offers a modernization path without patching the stripped
+emulator, but it cannot guarantee that every old edge case behaves identically.
+Native SDL 1.2 therefore remains valuable even if SDL12-compat works perfectly
+on a particular desktop.
+
+In practical terms, SDL12-compat can benefit from SDL2's maintained driver
+code, current X11/Wayland integration, newer audio-device handling and input
+hotplug support. It also reduces dependence on an SDL 1.2 library that modern
+distributions are gradually dropping. The bundle's audio route still starts
+at `AUDIODEV=sysdefault`, so selecting SDL12-compat does not by itself replace
+ALSA, PulseAudio or PipeWire; it modernizes the SDL layer above that route.
+
+Native SDL 1.2 avoids the translation layer entirely. Its software-surface,
+palette, event, timing and fullscreen behavior are the semantics the 2018
+Nucore binary expected. That smaller regression surface—and the real-cabinet
+success of the default configuration—is why it remains the production choice,
+not because SDL12-compat lacks value.
+
 | SDL implementation | Shim | Command fragment | Status |
 |---|---|---|---|
 | Native SDL 1.2 | enabled | `--no-reboot` | Established default |
@@ -518,12 +551,12 @@ easiest way).
 
 ## `sigio_fix.so` — default protection for audio, threads and signals
 
-`bin/sigio_fix.so` is a 32-bit `LD_PRELOAD` shim shipped pre-built; the
-source lives in `src/sigio_fix.c`. It remains enabled by default because the
-original binaries assume old scheduling and signal-delivery behavior, and the
-real cabinet RTC/SIGIO path has not been validated without it. Desktop hosts
-can be tested with `--no-shim`, but a successful desktop run is not evidence
-that a cabinet interrupt workload is safe.
+`bin/sigio_fix.so` is a 32-bit `LD_PRELOAD` shim shipped pre-built; its source
+lives in `src/sigio_fix.c`. The failures it addresses are not hypothetical:
+audio instability and legacy signal/RTC failures were observed repeatedly for
+years by this project's maintainer and independently by Jean. The wrappers
+below were written for those concrete symptoms. They remain enabled by default
+in every SDL, ASIX, Nucore and Pinbox configuration.
 
 The shim performs five small interventions. They are now split into signal
 safety and audio stabilization:
@@ -550,13 +583,28 @@ safety and audio stabilization:
    error path the original binary takes when it's already at the
    requested priority.
 
-The signal protections (1, the signal-blocking half of 2, and 3) and audio
-protections are enabled by default with both native SDL 1.2 and SDL12-compat.
-Current SDL12-compat testing produced clean audio throughout gameplay; an ALSA
-underrun was seen only while the program was exiting, when the audio pipeline
-was already shutting down. That exit-only message is harmless. Native SDL 1.2
-has not yet had the same conclusive with/without-audio-shim comparison, so the
-README does not claim that either SDL path requires the audio half.
+#### What the tests do—and do not—prove
+
+Paul B. Fedele's real-cabinet report confirms that the complete Debian 13,
+PipeWire and default Nucore-Portable stack works on physical Pinball 2000
+hardware. He also reports that it cleared audio problems present on older
+Linux installations during the ALSA-to-PulseAudio transition. That is strong
+validation of the shipped configuration, but it is not an isolated test of
+each shim wrapper.
+
+A current Kali desktop test did not reproduce gameplay underruns with
+SDL12-compat; one underrun appeared only during program exit, while audio was
+already being dismantled, and is harmless. That single host result does not
+erase the long-running failures seen on other machines, exercise every real
+cabinet RTC/SIGIO condition, or prove that either shim half is universally
+unnecessary. Native SDL 1.2 has likewise not had a controlled comparison
+across enough kernels, sound servers and cabinet workloads to overturn the
+historical evidence.
+
+For that reason the safe policy is deliberately conservative: both shim halves
+stay enabled everywhere unless the user explicitly disables one for an A/B
+test. A successful `--no-shim` run is useful evidence about that machine and
+workload, not a general compatibility guarantee.
 
 `--no-audio-shim` leaves only signal protection. `--no-sigio-shim` disables
 signal protection while leaving that mode's audio choice unchanged, and
