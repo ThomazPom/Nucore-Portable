@@ -143,6 +143,120 @@ examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
 | `rfm_15` or `rfm` | Revenge From Mars — Revision 1.5 |
 | `auto` | Ask Nucore to detect the game |
 
+### Nucore command-line reference recovered from the binary
+
+The original manual is not required for this table. The option names,
+argument requirements, validation ranges, switch behavior and diagnostic
+messages were recovered directly from the stripped executables. `nucore` and
+`nucore_nwd` share the current Nucore table. Pinbox has the same public
+options but a few extra hidden ones, documented separately below.
+
+Nucore expects **one dash**, for example `-window`, not `--window`. Put these
+options after the game name when using `start.sh`.
+
+#### Options printed by Nucore's embedded help
+
+| Nucore option | Argument | Effect |
+|---|---:|---|
+| `-nojukeplay` | none | Disable jukebox-song playback |
+| `-genplaylist` | none | Scan the jukebox content and generate a new playlist; this can write playlist data |
+| `-flipscreen` | none | Rotate the displayed video upside down for cabinet mounting |
+| `-fullscreen` | none | Request fullscreen video |
+| `-window` | none | Request windowed video |
+| `-bpp 16` | `16` | Use the 16-bit renderer expected by the original cabinet presentation |
+| `-bpp 32` | `32` | Use the 32-bit renderer; every other value is rejected |
+| `-parallel ADDRESS` | hexadecimal address | Redirect the emulated parallel port to a real host LPT address, normally `0x378` |
+
+`-fullscreen` and `-window` set opposite values; if both are supplied, the
+last one parsed wins. Command-line values are processed after `pb2k.cfg`, so
+they override the corresponding loaded configuration for that run.
+
+#### Functional options omitted from the embedded help
+
+| Nucore option | Argument | Recovered behavior | Recommendation |
+|---|---:|---|---|
+| `-nice N` | integer `-20` through `20` | Set Nucore's requested Unix nice value | Advanced diagnostics only; negative values require privilege |
+| `-nopause` | none | Disable Nucore's pause support | Useful if cabinet focus/pause behavior is undesirable |
+| `-nowatermark` | none | Start with the watermark disabled | Safe presentation option |
+| `-mdelay N` | integer microseconds | Set an internal emulation delay; Nucore confirms `Delay set to N us` | Timing experiment only |
+| `-testvar N` | integer microseconds | Set an internal test variable; exact downstream purpose is not named in the stripped binary | Developer archaeology only |
+| `-serial SPEC` | backend specification | Add an emulated serial backend; the binary accepts up to four | Advanced; syntax is inherited from its embedded QEMU core |
+
+The embedded serial backend contains support strings for `null`, `stdio`,
+`file:PATH`, `pipe:PATH` and device paths under `/dev`. This project does not
+currently depend on `-serial`; prefer `--asix` for the supported ASIX cabinet
+adapter path.
+
+#### Extra Pinbox options
+
+Select this executable family with `--pinbox`. `pinbox` and `pinbox_nwd`
+support all of the public and functional options above, plus these two:
+
+| Pinbox option | Argument | Recovered behavior | Recommendation |
+|---|---:|---|---|
+| `-gamma N` | number `1` through `10` | Set the renderer gamma value; values outside the range are rejected | Presentation tuning |
+| `-nothreads` | none | Disable all Pinbox emulation threads and force 32-bit rendering | Diagnostic fallback only |
+
+For example:
+
+```sh
+./start.sh --pinbox --no-reboot swe1_14 -window -bpp 16 -gamma 2
+./start.sh --pinbox --no-reboot swe1_14 -window -nothreads
+```
+
+The Pinbox parser also consumes `-slideppause ARG`, but its dispatch entry has
+no implementation. Supplying it has no recovered effect, so it is not a
+usable feature.
+
+#### Examples using recovered options
+
+```sh
+# Presentation
+./start.sh --no-reboot swe1_14 -window -bpp 16 -flipscreen
+./start.sh --no-reboot rfm_15 -fullscreen -bpp 32 -nowatermark
+
+# Jukebox behavior
+./start.sh --no-reboot swe1_14 -window -bpp 16 -nojukeplay
+./start.sh --no-reboot swe1_14 -window -bpp 16 -genplaylist
+
+# Focus/pause and scheduling diagnostics
+./start.sh --no-reboot swe1_14 -window -bpp 16 -nopause
+./start.sh --no-reboot swe1_14 -window -bpp 16 -nice -10
+
+# Internal timing experiments: record the baseline before changing these
+./start.sh --no-reboot swe1_14 -window -bpp 16 -mdelay 100
+./start.sh --no-reboot swe1_14 -window -bpp 16 -testvar 100
+
+# Real cabinet parallel port
+./start.sh --no-reboot swe1_14 -fullscreen -bpp 16 -parallel 0x378
+```
+
+When you provide any Nucore option, spell out `-window` or `-fullscreen` and
+the desired `-bpp` explicitly. The launcher's automatic
+`-fullscreen -bpp 16` pair is added only when no Nucore options were supplied.
+
+#### Low-level positional forms and legacy entries
+
+The binary itself accepts `?`, `-h` or `--h` as its first argument to print
+its small embedded help screen. `start.sh` handles `-h` and `--help` as
+launcher help instead.
+
+The binary can also accept a path ending in `.cfg` before the game name and
+prints `Using config file: ...`. The portable launcher intentionally uses the
+shipped `config/pb2k.cfg` path and does not expose arbitrary config paths as a
+normal high-level argument.
+
+Four additional names exist in the parser table: `-net ARG`, `-s`, `-p ARG`
+and `-d ARG`. Disassembly confirms that this Nucore parser recognizes and
+consumes them but performs no option-specific action. They appear to be dead
+compatibility remnants from the embedded emulator core and should not be used.
+
+Pinbox retains those dead compatibility entries and also recognizes
+`-tftp ARG` and `-redir ARG`; all dispatch below the implemented option range
+and have no recovered effect. The archival `nucore.225` resembles the current
+Nucore table, while `nucore.old` resembles the Pinbox table. They are retained
+as historical binaries and are not selected by `start.sh`.
+
 ### Runner and binary selection
 
 | Launcher options | Runner | Emulator | Intended use |
