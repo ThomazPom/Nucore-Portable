@@ -13,18 +13,6 @@ ever touching `dpkg --add-architecture i386` or chasing 32-bit `.so` packages.
 > **[watch the real-cabinet installation and test on YouTube](https://www.youtube.com/watch?v=cwnoy5SBgOg)**.
 >
 > **[Original test report](https://github.com/ThomazPom/Encore-Pinball2000/issues/2)**
->
-> The repository HEAD used for that August 2 test was commit
-> [`81b0f72`](https://github.com/ThomazPom/Nucore-Portable/commit/81b0f72638940459e794c7bf042e3d08d46daa3b).
-> To clone that exact historical cabinet-tested snapshot instead of current
-> `main`:
->
-> ```sh
-> git clone https://github.com/ThomazPom/Nucore-Portable.git && git -C Nucore-Portable switch --detach 81b0f72
-> ```
->
-> Current users should normally clone `main`; the pinned command exists to
-> make the cabinet-test claim reproducible.
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=cwnoy5SBgOg">
@@ -36,31 +24,39 @@ ever touching `dpkg --add-architecture i386` or chasing 32-bit `.so` packages.
 
 ## Quick start
 
-The whole repo is designed to be a **drop-in cabinet brain replacement**:
+Start with a harmless windowed test. These three lines are ready to paste:
 
 ```sh
-git clone <this-repo> nucore-portable
-cd nucore-portable
-./start.sh --no-reboot swe1_14 -window  # safe desktop test, no install needed
-./start.sh --no-reboot swe1_14 -fullscreen -bpp 16
-./install.sh         # turn the box into a Pinball-2000 cabinet:
-                     #   • autostarts on graphical login
-                     #   • cross-distro display-manager autologin
-                     #   • F1/Esc → back to a normal desktop
+git clone https://github.com/ThomazPom/Nucore-Portable.git
+cd Nucore-Portable
+./start.sh --no-reboot swe1_14 -window
 ```
 
-That's the whole user story. Clone anywhere on the disk, run it from
-where it lives, no build step, no apt dependencies, no `~/.config`
-pollution, no `/usr/local` writes outside the systemd / polkit /
-display-manager drop-ins (all of which `./uninstall.sh` reverses
-cleanly). The bundle ships with its own i386 loader and shared libs,
-so the host never needs `dpkg --add-architecture i386` even once.
+This does not install anything or make persistent system changes. It runs Star
+Wars windowed with the reboot watchdog disabled. The bundle carries its own
+32-bit loader and libraries, so a stock x86_64 Debian system does not need
+multiarch packages. An authentication prompt may appear because Nucore needs
+raw cabinet-I/O and scheduling privileges while it runs.
 
-The first command runs Star Wars windowed with the watchdog disabled. Plain
-`./start.sh` selects the production watchdog, which may hard-reboot a cabinet
-PC after a stall; always use `--no-reboot` for desktop experiments.
+If that works, fullscreen is still a safe test:
 
-## Restore a cabinet (production install)
+```sh
+./start.sh --no-reboot swe1_14 -fullscreen -bpp 16
+```
+
+Keep `--no-reboot` for experiments. Plain `./start.sh` selects the production
+watchdog, which may hard-reboot a cabinet PC after a stall.
+
+## When the test works: optional cabinet integration
+
+You can stop with the commands above and launch Nucore manually forever.
+`install.sh` is only for owners who want the machine to behave like a cabinet:
+automatic login, automatic Nucore startup, and a clean return to the desktop
+with F1 or Esc.
+
+The installer makes real system changes, listed below. They are deliberately
+scoped and reversible, but this is not a zero-touch operation. Read the list,
+then run:
 
 ```sh
 ./install.sh
@@ -69,12 +65,18 @@ PC after a stall; always use `--no-reboot` for desktop experiments.
 (`install.sh` re-launches itself under `run0` / `sudo` / `pkexec`
 automatically — no need to be in the sudoers file on Debian 13.)
 
-This install is deliberately **non-invasive**. It does **not** disable
-GDM/SDDM/LightDM, does **not** change the default systemd target, does
-**not** touch `getty@tty1`, does **not** mask sleep/suspend/hibernate,
-does **not** mask notification daemons, and does **not** install any
-apt packages. The desktop you have today is the desktop you have
-tomorrow — nucore just shows up fullscreen on top of it.
+It does not disable GDM/SDDM/LightDM, change the default systemd target, touch
+`getty@tty1`, mask sleep/suspend/hibernate or notification daemons, or install
+APT packages. It does add a system service and polkit rule, and can configure
+display-manager autologin. `./uninstall.sh` reverses those project-owned
+changes.
+
+Paul's cabinet video is also an excellent example of Linux tuned as a dedicated
+appliance: the boot is unusually fast and the transition into Nucore is nearly
+seamless. The installer provides the service, autologin and graphical-session
+handoff described here. Total boot time still depends on the PC firmware,
+storage, desktop and services enabled on that particular machine; it does not
+silently apply every operating-system optimization demonstrated in the video.
 
 ### What gets written
 
@@ -573,9 +575,11 @@ install/              upstream nucore install assets (kept for reference)
 `bin/sigio_fix.so` is a 32-bit `LD_PRELOAD` shim shipped pre-built; its source
 lives in `src/sigio_fix.c`. The failures it addresses are not hypothetical:
 audio instability and legacy signal/RTC failures were observed repeatedly for
-years by this project's maintainer and independently by Jean. The wrappers
-below were written for those concrete symptoms. They remain enabled by default
-in every SDL, ASIX, Nucore and Pinbox configuration.
+years by this project's maintainer. Paul B. Fedele independently reported
+audio trouble on older Linux audio stacks before confirming this bundle on his
+cabinet. The wrappers below were written for concrete symptoms, not theoretical
+ones. They remain enabled by default in every SDL, ASIX, Nucore and Pinbox
+configuration.
 
 The shim performs five small interventions. They are now split into signal
 safety and audio stabilization:
@@ -610,6 +614,17 @@ hardware. He also reports that it cleared audio problems present on older
 Linux installations during the ALSA-to-PulseAudio transition. That is strong
 validation of the shipped configuration, but it is not an isolated test of
 each shim wrapper.
+
+For exact reproduction, repository HEAD at the time of Paul's August 2 test
+was commit
+[`81b0f72`](https://github.com/ThomazPom/Nucore-Portable/commit/81b0f72638940459e794c7bf042e3d08d46daa3b):
+
+```sh
+git clone https://github.com/ThomazPom/Nucore-Portable.git && git -C Nucore-Portable switch --detach 81b0f72
+```
+
+That command is historical test provenance. New installations should use the
+current `main` quick start at the top of this README.
 
 A current Kali desktop test did not reproduce gameplay underruns with
 SDL12-compat; one underrun appeared only during program exit, while audio was
