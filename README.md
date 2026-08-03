@@ -12,7 +12,7 @@ The whole repo is designed to be a **drop-in cabinet brain replacement**:
 ```sh
 git clone <this-repo> nucore-portable
 cd nucore-portable
-./start.sh           # smoke-test it on your desktop, no install needed
+./start.sh --no-reboot -window  # safe desktop smoke test, no install needed
 ./install.sh         # turn the box into a Pinball-2000 cabinet:
                      #   • autostarts on graphical login
                      #   • cross-distro display-manager autologin
@@ -43,7 +43,7 @@ The point of this repo is the **bundle around `nucore`**, not nucore itself:
 * a curated set of i386 shared libraries (`bundlex86/`, ~37 MB)
 * a bundled `ld-linux.so.2` so the host's loader is never used
 * a small launcher (`bin/bundled.sh`) that re-execs the binary through the
-  bundled loader with a runtime-injected `sigio_fix.so`
+  bundled loader with a runtime-injected `sigio_fix.so` by default
 * `src/sigio_fix.c` (+ `Makefile`) — the LD_PRELOAD shim that makes the
   legacy 32-bit audio + signal pipeline survive on modern x86_64 kernels
   (shipped pre-built as `bin/sigio_fix.so`; rebuild with `make`)
@@ -57,60 +57,158 @@ The point of this repo is the **bundle around `nucore`**, not nucore itself:
 `nucore` itself is the upstream Big Guy's Pinball 2.25.3R build (extracted from
 the official Lubuntu deb in FlipperFiles). It is not modified here.
 
-## Quickstart
+## Quickstart: choose the safe command first
 
 ```sh
 git clone <this-repo> nucore-portable
 cd nucore-portable
-./start.sh                              # production: run + nucore + swe1_14 fullscreen
-./start.sh rfm_15                       # production: run + nucore + rfm_15
-./start.sh --no-reboot                  # dev variant: runrd + nucore_nwd
-./start.sh --pinbox                     # production pinbox fork
-./start.sh --pinbox --no-reboot         # dev pinbox
-./start.sh --asix swe1_14 -parallel 0x378   # ASIX USB→serial + LPT
-./start.sh --no-reboot rfm_15 -window   # windowed dev session
+./start.sh --no-reboot swe1_14 -window
 ```
 
-Valid game names (the values nucore itself accepts):
+That command is the recommended first desktop test: Star Wars, windowed,
+native SDL 1.2, shim enabled, and **no host reboot if the emulator fails**.
+Once that works, try fullscreen:
+
+```sh
+./start.sh --no-reboot swe1_14 -fullscreen -bpp 16
+```
+
+> **Safety:** plain `./start.sh` selects the production watchdog. On a stall,
+> that runner is designed to hard-reboot a cabinet PC. Always add
+> `--no-reboot` for desktop experiments.
+
+### Command shape
+
+```text
+./start.sh [launcher options] [game] [nucore options]
+```
+
+Examples:
+
+```sh
+# Safe desktop launches
+./start.sh --no-reboot                         # SWE1, fullscreen defaults
+./start.sh --no-reboot swe1_14 -window         # SWE1 in a window
+./start.sh --no-reboot rfm_15 -window          # RFM in a window
+./start.sh --no-reboot auto -fullscreen        # let Nucore detect the game
+
+# Pinbox fork
+./start.sh --pinbox --no-reboot swe1_14 -window
+./start.sh --pinbox --no-reboot rfm_15 -fullscreen -bpp 16
+
+# Cabinet I/O
+./start.sh --no-reboot swe1_14 -parallel 0x378
+./start.sh --asix --no-reboot swe1_14 -parallel 0x378
+
+# Production cabinet runners: intentionally omit --no-reboot
+./start.sh swe1_14 -fullscreen -bpp 16
+./start.sh --pinbox rfm_15 -fullscreen -bpp 16
+
+# Privilege and desktop-inhibitor diagnostics
+./start.sh --no-reboot --root=run0 swe1_14 -window
+./start.sh --no-reboot --root=pkexec swe1_14 -window
+./start.sh --no-reboot --root=sudo swe1_14 -window
+./start.sh --no-reboot --no-root --no-inhibit swe1_14 -window
+
+# Send everything after -- directly as the game/argument portion
+./start.sh --no-reboot -- swe1_14 -window -bpp 16 -nojukeplay
+```
+
+### Launcher option reference
+
+| Option | Default | Effect |
+|---|---|---|
+| `--no-reboot` | off | Select the safe testing runner and no-watchdog emulator binary |
+| `--pinbox` | off | Run the Pinbox fork instead of Nucore |
+| `--asix` | off | Add the ASIX `libftchipid` overlay for USB-to-serial cabinet I/O |
+| `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
+| `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
+| `--root=run0` | auto | Force systemd `run0` privilege escalation |
+| `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
+| `--root=sudo` | auto | Force classic `sudo` privilege escalation |
+| `--root=none` / `--no-root` | auto | Refuse escalation; useful only when capabilities are already present or for limited tests |
+| `--no-inhibit` | off | Do not prevent desktop idle, locking, sleep, or lid actions |
+| `--` | — | Stop parsing launcher options |
+| `-h`, `--help` | — | Print launcher help and exit |
+
+Nucore options use a single dash and are passed through unchanged. Common
+examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
+`-nojukeplay`.
+
+### Games
 
 | Name | Game |
 |---|---|
-| `swe1_14` | Star Wars Episode 1 — Revision 1.4 *(default)* |
-| `rfm_15` | Revenge From Mars — Revision 1.5 |
-| `auto` | auto-detect game |
+| `swe1_14` or `swe1` | Star Wars Episode 1 — Revision 1.4 *(default)* |
+| `rfm_15` or `rfm` | Revenge From Mars — Revision 1.5 |
+| `auto` | Ask Nucore to detect the game |
 
-The short aliases `swe1` / `rfm` are also accepted and rewritten to the
-canonical `swe1_14` / `rfm_15`.
+### Runner and binary selection
 
-`start.sh` auto-detects how to grant nucore the raw I/O it needs
-(parallel port, RT scheduling). On Debian 13 it uses `run0` (proper
-polkit GUI auth dialog, no sudoers entry required). On older systems
-it falls back to `pkexec`, then `sudo`. In all three cases the script
-explicitly forwards `$DISPLAY` / `$XAUTHORITY` / `$WAYLAND_DISPLAY` /
-`$XDG_RUNTIME_DIR` / `$HOME` across the privilege boundary, so SDL
-keeps talking to your existing X/Wayland session — no framebuffer
-fallback, no GNOME freeze. The launch is wrapped in `systemd-inhibit`
-so the desktop will not auto-lock, dim, suspend or react to the lid
-closing while you are playing.
-
-After `./install.sh`, none of that escalation chain is invoked at
-runtime: the system unit is already root, and the wrapper exec's nucore
-into the user's own logind slice (so gnome-shell / KWin treat it as a
-session app, not as an alien root grab). Press `Esc` or use the in-game
-coin-door menu to exit cleanly back to your desktop. See "Privileges"
-below for the full picture.
-
-## Production vs. testing — the four modes
-
-| Modifiers | Runner | Binary | When to use |
+| Launcher options | Runner | Emulator | Intended use |
 |---|---|---|---|
-| *(none)* — default | `run` | `nucore` | **Production**: full watchdog, hard-reboots the host on stall |
-| `--no-reboot` | `runrd` | `nucore_nwd` | **Desk testing**: emulator dies cleanly on crash, no host reboot — safe for patching |
-| `--pinbox` | `run` | `pinbox` | Production pinbox fork |
-| `--pinbox --no-reboot` | `run_pb_rd` | `pinbox_nwd` | Desk testing of the pinbox fork |
+| *(none)* | `run` | `nucore` | Production watchdog; may hard-reboot the host |
+| `--no-reboot` | `runrd` | `nucore_nwd` | Safe Nucore desktop testing |
+| `--pinbox` | `run` | `pinbox` | Production Pinbox watchdog |
+| `--pinbox --no-reboot` | `run_pb_rd` | `pinbox_nwd` | Safe Pinbox desktop testing |
 
-`--asix` is orthogonal to the four modes above: it overlays the ASIX
-`libftchipid` for USB-to-serial cabinet adapters.
+The SDL implementation and shim are independent of this table. This produces
+four useful A/B combinations:
+
+| SDL implementation | Shim | Command fragment | Status |
+|---|---|---|---|
+| Native SDL 1.2 | enabled | `--no-reboot` | Established default |
+| Native SDL 1.2 | disabled | `--no-reboot --no-shim` | Experimental |
+| SDL 1.2 API on SDL 2 | enabled | `--no-reboot --sdl12-compat` | Experimental modernization |
+| SDL 1.2 API on SDL 2 | disabled | `--no-reboot --sdl12-compat --no-shim` | Most experimental |
+
+Copy-paste A/B test:
+
+```sh
+./start.sh --no-reboot swe1_14 -window
+./start.sh --no-reboot --no-shim swe1_14 -window
+SDL12COMPAT_DEBUG_LOGGING=1 ./start.sh --no-reboot --sdl12-compat swe1_14 -window
+SDL12COMPAT_DEBUG_LOGGING=1 ./start.sh --no-reboot --sdl12-compat --no-shim swe1_14 -window
+```
+
+Expected markers:
+
+```text
+[sigio_fix] loaded                              # shim is active
+INFO: sdl12-compat 1.2.68, ... SDL2 2.26.5     # SDL 2 path is active
+*** EXPERIMENT: sigio_fix.so is NOT loaded *** # --no-shim is active
+```
+
+`--sdl12-compat`, `--no-shim`, and `--asix` compose with each other. No
+option installs or replaces host libraries. Native SDL 1.2 and the shim remain
+the production defaults because desktop success does not validate real cabinet
+RTC/SIGIO interrupts, fullscreen timing, or cabinet input/output.
+
+### Audio selection
+
+Audio defaults to `AUDIODEV=sysdefault`, which normally reaches PulseAudio or
+PipeWire through the bundled 32-bit ALSA Pulse plugins. Override it only for
+diagnostics:
+
+```sh
+AUDIODEV=default ./start.sh --no-reboot swe1_14 -window
+AUDIODEV=hw:0 ./start.sh --no-reboot swe1_14 -window
+```
+
+Direct `hw:0` access bypasses desktop mixing and may fail when PipeWire or
+PulseAudio owns the device.
+
+### Privilege behavior
+
+`start.sh` auto-detects how to grant raw I/O and real-time scheduling access.
+It tries existing privileges, then `run0`, `pkexec`, and `sudo`. Display and
+runtime variables are explicitly forwarded so the elevated emulator remains
+inside the current graphical session. `systemd-inhibit` prevents locking,
+sleep, and lid actions while it runs.
+
+After `./install.sh`, the system unit already runs with the required privilege
+and launches Nucore inside the logged-in user's slice. See “Privileges” below
+for the detailed flow.
 
 ## Production install (autostart in your graphical session)
 
@@ -235,7 +333,9 @@ src/                  source for our bits of the bundle
 bundlex86/            i386 shared libraries the bundle ships
   direct/             libs nucore links against directly
   indirect/           transitive deps + ld-linux.so.2
+  alsa-lib/           32-bit Pulse ALSA plugin set
   asix/               ASIX libftchipid overlay (USB-to-serial cabinets)
+  sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
 update/               *_update.bin (one update at a time — see below)
   swe1_14/            SWE1 update tree (latest official Williams: 0150)
@@ -301,14 +401,14 @@ easiest way).
 > executable. Pick whatever extractor you already have installed and
 > point it at the `.exe`.
 
-## `sigio_fix.so` — what it is, why it's mandatory on x86_64
+## `sigio_fix.so` — default protection for audio, threads and signals
 
 `bin/sigio_fix.so` is a 32-bit `LD_PRELOAD` shim shipped pre-built; the
-source lives in `src/sigio_fix.c`. **It is not optional** — without it
-the legacy nucore/pinbox audio pipeline crashes on any post-2010 kernel
-+ glibc (the original binaries were built against GCC 4.2.4-era glibc
-and ALSA, and assume scheduling / signal-delivery semantics that no
-longer hold). With it loaded, the emulator boots and stays up.
+source lives in `src/sigio_fix.c`. It remains enabled by default because the
+original binaries assume old scheduling and signal-delivery behavior, and the
+real cabinet RTC/SIGIO path has not been validated without it. Desktop hosts
+can be tested with `--no-shim`, but a successful desktop run is not evidence
+that a cabinet interrupt workload is safe.
 
 The shim performs five small interventions, all surgical:
 
@@ -354,16 +454,17 @@ for why `--preload` and not `LD_PRELOAD=`).
 
 ## How the launcher works (one paragraph)
 
-`start.sh` parses `--no-reboot` / `--pinbox` / `--asix` to pick a
+`start.sh` parses `--no-reboot` / `--pinbox` / `--asix` /
+`--sdl12-compat` / `--no-shim` to pick a
 `(runner, binary)` pair, then calls
 `bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. The runner
 binary `execv()`s back into `bundled.sh`; the second entry is detected via the
 `_BUNDLED_BINARY` env var and finally exec's the real emulator through the
-bundled `ld-linux.so.2 --preload sigio_fix.so --library-path
-bundlex86/direct:bundlex86/indirect`. Passing `--preload` to `ld-linux`
-directly (instead of `LD_PRELOAD=`) is what makes the preload survive the
-runner→exec wrap — the env-var version was getting silently dropped, which
-was the original "no sound on x64" symptom.
+bundled `ld-linux.so.2 --preload sigio_fix.so`. Its library path is an
+optional overlay followed by `bundlex86/direct:bundlex86/indirect`. Passing
+`--preload` to `ld-linux` directly (instead of `LD_PRELOAD=`) is what makes
+the default preload survive the runner→exec wrap. `--no-shim` deliberately
+omits that loader argument for the current launch.
 
 ## Real cabinet I/O
 
@@ -372,8 +473,8 @@ was the original "no sound on x64" symptom.
 
 ## Caveats
 
-* Audio defaults to `sysdefault` (PulseAudio / pipewire). Override with
-  `AUDIODEV=hw:0 ./start.sh`.
+* Audio defaults to `sysdefault` (PulseAudio / PipeWire). See “Audio
+  selection” above before using direct hardware devices.
 * x86_64 Linux only. Running on ARM hosts would need an extra i386-on-ARM
   layer (qemu-user) which is out of scope here.
 * The legacy nucore EULA (in `install/`) restricts modification, but allows
@@ -450,6 +551,10 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
 * `bin/pinbox` — the pinbox fork of nucore
 * `bundlex86/` — pre-curated i386 system libraries (libc, libSDL, libmpg123,
   libasound, ld-linux.so.2, etc.) collected from Debian/Ubuntu i386 packages
+* `bundlex86/alsa-lib/` — Debian i386 Pulse ALSA configuration, PCM and control
+  plugins used to avoid host multiarch dependencies
+* `bundlex86/sdl12-compat/` — Debian 13 i386 `sdl12-compat` 1.2.68-3;
+  checksum and full redistribution notices are included beside the binary
 * `roms/`, `update/` — extracted from `FlipperFiles/Roms/Nucore/nucore-roms.tar.gz.*`
 * `resources/`, `config/`, `install/` — from the same upstream nucore deb
 ```
