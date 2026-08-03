@@ -4,7 +4,7 @@
 # Wraps the target binary in a self-contained i386 runtime (../bundlex86)
 # so the host needs no `dpkg --add-architecture i386` or system 32-bit libs.
 #
-# Usage: bundled.sh [--no-shim] [mode] <runner> <binary> [args...]
+# Usage: bundled.sh [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
 #   portable          — native SDL 1.2 + sigio_fix (default)
 #   asix              — portable + ASIX libftchipid overlay
 #   sdl12-compat      — experimental SDL 1.2 ABI on bundled SDL 2
@@ -35,6 +35,8 @@ set_library_path() {
 # --preload as a flag (env LD_PRELOAD is dropped across the runner→exec wrap).
 if [ -n "$_BUNDLED_BINARY" ]; then
     set_library_path "$_BUNDLED_MODE"
+    export NUCORE_SHIM_AUDIO="$_BUNDLED_SHIM_AUDIO"
+    export NUCORE_SHIM_SIGIO="$_BUNDLED_SHIM_SIGIO"
     if [ "$_BUNDLED_USE_SHIM" = 0 ]; then
         echo "*** EXPERIMENT: sigio_fix.so is NOT loaded; RTC/SIGIO safety is unverified ***" >&2
         exec "$BUNDLE/indirect/ld-linux.so.2" \
@@ -52,22 +54,35 @@ fi
 
 # ── Normal invocation ──────────────────────────────────────────────────────────
 USE_SHIM=1
-if [ "$1" = --no-shim ]; then
-    USE_SHIM=0
-    shift
-fi
+SHIM_AUDIO=auto
+SHIM_SIGIO=1
+while :; do
+    case "$1" in
+        --no-shim)       USE_SHIM=0; shift ;;
+        --no-audio-shim) SHIM_AUDIO=0; shift ;;
+        --no-sigio-shim) SHIM_SIGIO=0; shift ;;
+        *) break ;;
+    esac
+done
 
 case "$1" in
     portable|asix|sdl12-compat|sdl12-compat-asix) MODE="$1"; shift ;;
     *)             MODE=portable ;;
 esac
 
+if [ "$SHIM_AUDIO" = auto ]; then
+    case "$MODE" in
+        sdl12-compat|sdl12-compat-asix) SHIM_AUDIO=0 ;;
+        *)                              SHIM_AUDIO=1 ;;
+    esac
+fi
+
 RUNNER="$1"; [ "$#" -gt 0 ] && shift
 BINARY="$1"; [ "$#" -gt 0 ] && shift
 
 if [ -z "$RUNNER" ] || [ -z "$BINARY" ]; then
     cat >&2 <<EOF
-Usage: $0 [--no-shim] [mode] <runner> <binary> [args...]
+Usage: $0 [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
   portable          — native SDL 1.2 + sigio_fix (default)
   asix              — portable + ASIX libftchipid overlay
   sdl12-compat      — experimental SDL 1.2 ABI on SDL 2
@@ -91,6 +106,8 @@ set_library_path "$MODE"
 
 export _BUNDLED_MODE="$MODE"
 export _BUNDLED_USE_SHIM="$USE_SHIM"
+export _BUNDLED_SHIM_AUDIO="$SHIM_AUDIO"
+export _BUNDLED_SHIM_SIGIO="$SHIM_SIGIO"
 export _BUNDLED_BINARY="$BINARY"
 exec "$BUNDLE/indirect/ld-linux.so.2" \
     --inhibit-cache \

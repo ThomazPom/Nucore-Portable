@@ -9,7 +9,8 @@
  * TARGET BINARIES : bin/nucore, bin/nucore_nwd, bin/pinbox, bin/pinbox_nwd
  *                   (all 32-bit ELF, stripped, GCC 4.2.4-era builds).
  *
- * Five interventions:
+ * Five interventions. The two halves can be selected independently with
+ * NUCORE_SHIM_AUDIO=0 and NUCORE_SHIM_SIGIO=0.
  *
  *  1. sigaction wrapper   — adds SA_ONSTACK|SA_RESTART to SIGALRM/SIGIO handlers.
  *                           Each thread gets a 128 KB dedicated alternate stack so
@@ -64,6 +65,8 @@ typedef unsigned short Uint16;
 
 static __thread char   tls_alt[ALTSTACK_SZ];
 static __thread int    tls_alt_installed;
+static int             audio_fixes_enabled = 1;
+static int             sigio_fixes_enabled = 1;
 
 static void ensure_altstack(void)
 {
@@ -99,7 +102,7 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
     if (!real_sigaction)
         real_sigaction = dlsym(RTLD_NEXT, "sigaction");
 
-    if (act && (sig == SIGALRM || sig == SIGIO)) {
+    if (sigio_fixes_enabled && act && (sig == SIGALRM || sig == SIGIO)) {
         struct sigaction fixed = *act;
 
         ensure_altstack();
@@ -129,8 +132,10 @@ static void *thread_trampoline(void *p)
     void  *arg          = w->arg;
     free(w);
 
-    ensure_altstack();
-    block_timer_signals();
+    if (sigio_fixes_enabled) {
+        ensure_altstack();
+        block_timer_signals();
+    }
 
     /*
      * Boost child threads to SCHED_FIFO priority 10.
@@ -138,9 +143,11 @@ static void *thread_trampoline(void *p)
      * preventing starvation that causes ALSA underruns.
      * Requires CAP_SYS_NICE (i.e. run with sudo).
      */
-    struct sched_param sp = { .sched_priority = 10 };
-    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0)
-        pthread_setschedparam(pthread_self(), SCHED_RR, &sp);  /* fallback */
+    if (audio_fixes_enabled) {
+        struct sched_param sp = { .sched_priority = 10 };
+        if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0)
+            pthread_setschedparam(pthread_self(), SCHED_RR, &sp); /* fallback */
+    }
 
     return fn(arg);
 }
@@ -176,11 +183,12 @@ int Mix_OpenAudio(int frequency, Uint16 format, int channels, int chunksize)
     if (!real_Mix_OpenAudio)
         real_Mix_OpenAudio = dlsym(RTLD_NEXT, "Mix_OpenAudio");
 
-    int new_chunk = chunksize * 2;   /* 4096 → 8192 */
+    int new_chunk = audio_fixes_enabled ? chunksize * 2 : chunksize;
     fprintf(stderr,
             "[sigio_fix] Mix_OpenAudio: freq=%d fmt=0x%04x ch=%d "
-            "chunk %d→%d samples\n",
-            frequency, format, channels, chunksize, new_chunk);
+            "chunk %d%s%d samples\n",
+            frequency, format, channels, chunksize,
+            audio_fixes_enabled ? "→" : " (unchanged) ", new_chunk);
     return real_Mix_OpenAudio(frequency, format, channels, new_chunk);
 }
 
@@ -223,7 +231,7 @@ int fcntl(int fd, int cmd, ...)
     long arg = va_arg(ap, long);
     va_end(ap);
 
-    if (cmd == F_SETOWN) {
+    if (sigio_fixes_enabled && cmd == F_SETOWN) {
         /*
          * Original code: fcntl(rtcFD, F_SETOWN, getpid())
          * Replace with F_SETOWN_EX targeting main thread TID so SIGIO
@@ -243,18 +251,27 @@ int fcntl(int fd, int cmd, ...)
 __attribute__((constructor))
 static void sigio_fix_init(void)
 {
+    const char *audio = getenv("NUCORE_SHIM_AUDIO");
+    const char *sigio = getenv("NUCORE_SHIM_SIGIO");
+    if (audio && strcmp(audio, "0") == 0)
+        audio_fixes_enabled = 0;
+    if (sigio && strcmp(sigio, "0") == 0)
+        sigio_fixes_enabled = 0;
+
     main_tid = (pid_t)syscall(SYS_gettid);
-    ensure_altstack();
+    if (sigio_fixes_enabled)
+        ensure_altstack();
 
     /* Main thread must NOT block SIGIO/SIGALRM — unblock just in case */
     sigset_t ub;
     sigemptyset(&ub);
     sigaddset(&ub, SIGIO);
     sigaddset(&ub, SIGALRM);
-    pthread_sigmask(SIG_UNBLOCK, &ub, NULL);
+    if (sigio_fixes_enabled)
+        pthread_sigmask(SIG_UNBLOCK, &ub, NULL);
 
-    fprintf(stderr,
-            "[sigio_fix] loaded — main_tid=%d  "
-            "SA_ONSTACK+pthread_mask+F_SETOWN_EX+Mix_OpenAudio+SCHED_FIFO active\n",
-            main_tid);
+    fprintf(stderr, "[sigio_fix] loaded — main_tid=%d  "
+            "sigio=%s  audio=%s\n", main_tid,
+            sigio_fixes_enabled ? "SA_ONSTACK+pthread_mask+F_SETOWN_EX" : "native",
+            audio_fixes_enabled ? "Mix_OpenAudio+SCHED_FIFO" : "native");
 }

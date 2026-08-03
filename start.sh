@@ -2,7 +2,8 @@
 # start.sh — quick test launcher for nucore-portable.
 #
 # Usage: ./start.sh [--no-reboot] [--pinbox] [--asix] [--sdl12-compat]
-#                   [--no-shim] [--] [game] [extra args...]
+#                   [--no-shim] [--no-audio-shim] [--no-sigio-shim]
+#                   [--] [game] [extra args...]
 #
 # Production targets (default):
 #   runner = run        (auto-restarts the emulator on crash)
@@ -24,6 +25,12 @@
 #                 The proven native SDL 1.2 path remains the default.
 #   --no-shim     EXPERIMENTAL: do not preload sigio_fix.so. Safe only for
 #                 testing; the real cabinet RTC/SIGIO path is unverified.
+#   --no-audio-shim
+#                 keep RTC/SIGIO protection but disable its audio interventions.
+#                 Default: on for native SDL 1.2, off for SDL12-compat/SDL 2.
+#   --no-sigio-shim
+#                 keep audio interventions but disable RTC/SIGIO protection.
+#                 Diagnostic only: this may restore the legacy boot/crash bug.
 #
 # game = swe1_14 (default) | rfm_15 | auto
 #   swe1_14   Star Wars Episode 1 - Revision 1.4
@@ -77,6 +84,8 @@ PINBOX=0
 ASIX=0
 SDL12_COMPAT=0
 USE_SHIM=1
+SHIM_AUDIO=auto
+SHIM_SIGIO=1
 ROOT_PREF=auto
 USE_INHIBIT=1
 
@@ -87,6 +96,8 @@ while [ $# -gt 0 ]; do
         --asix)        ASIX=1;        shift ;;
         --sdl12-compat) SDL12_COMPAT=1; shift ;;
         --no-shim)     USE_SHIM=0;    shift ;;
+        --no-audio-shim) SHIM_AUDIO=0; shift ;;
+        --no-sigio-shim) SHIM_SIGIO=0; shift ;;
         --no-root)     ROOT_PREF=none; shift ;;
         --root)        ROOT_PREF="$2"; shift 2 ;;
         --root=*)      ROOT_PREF="${1#--root=}"; shift ;;
@@ -176,6 +187,8 @@ have_caps() {
 
 BUNDLE_OPTIONS=()
 [ "$USE_SHIM" -eq 0 ] && BUNDLE_OPTIONS+=(--no-shim)
+[ "$SHIM_AUDIO" = 0 ] && BUNDLE_OPTIONS+=(--no-audio-shim)
+[ "$SHIM_SIGIO" = 0 ] && BUNDLE_OPTIONS+=(--no-sigio-shim)
 
 CMD=("$SCRIPT_DIR/bin/bundled.sh" "${BUNDLE_OPTIONS[@]}" "$MODE" \
      "$SCRIPT_DIR/bin/$RUNNER" \

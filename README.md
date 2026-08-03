@@ -123,6 +123,8 @@ Examples:
 | `--asix` | off | Add the ASIX `libftchipid` overlay for USB-to-serial cabinet I/O |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
+| `--no-audio-shim` | automatic | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
+| `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
 | `--root=run0` | auto | Force systemd `run0` privilege escalation |
 | `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
 | `--root=sudo` | auto | Force classic `sudo` privilege escalation |
@@ -273,7 +275,7 @@ four useful A/B combinations:
 |---|---|---|---|
 | Native SDL 1.2 | enabled | `--no-reboot` | Established default |
 | Native SDL 1.2 | disabled | `--no-reboot --no-shim` | Experimental |
-| SDL 1.2 API on SDL 2 | enabled | `--no-reboot --sdl12-compat` | Experimental modernization |
+| SDL 1.2 API on SDL 2 | signal fixes only | `--no-reboot --sdl12-compat` | Experimental modernization; SDL2 handles audio buffering |
 | SDL 1.2 API on SDL 2 | disabled | `--no-reboot --sdl12-compat --no-shim` | Most experimental |
 
 Copy-paste A/B test:
@@ -288,12 +290,12 @@ SDL12COMPAT_DEBUG_LOGGING=1 ./start.sh --no-reboot --sdl12-compat --no-shim swe1
 Expected markers:
 
 ```text
-[sigio_fix] loaded                              # shim is active
+[sigio_fix] loaded — ... sigio=... audio=...   # reports active shim halves
 INFO: sdl12-compat 1.2.68, ... SDL2 2.26.5     # SDL 2 path is active
 *** EXPERIMENT: sigio_fix.so is NOT loaded *** # --no-shim is active
 ```
 
-`--sdl12-compat`, `--no-shim`, and `--asix` compose with each other. No
+`--sdl12-compat`, the shim controls, and `--asix` compose with each other. No
 option installs or replaces host libraries. Native SDL 1.2 and the shim remain
 the production defaults because desktop success does not validate real cabinet
 RTC/SIGIO interrupts, fullscreen timing, or cabinet input/output.
@@ -524,7 +526,8 @@ real cabinet RTC/SIGIO path has not been validated without it. Desktop hosts
 can be tested with `--no-shim`, but a successful desktop run is not evidence
 that a cabinet interrupt workload is safe.
 
-The shim performs five small interventions, all surgical:
+The shim performs five small interventions. They are now split into signal
+safety and audio stabilization:
 
 1. **`sigaction` wrapper** — adds `SA_ONSTACK | SA_RESTART` to every
    `SIGALRM` / `SIGIO` handler the binary installs, and gives each
@@ -548,6 +551,15 @@ The shim performs five small interventions, all surgical:
 5. **`setpriority` wrapper** — silences the spurious "can't set nice"
    error path the original binary takes when it's already at the
    requested priority.
+
+The signal protections (1, the signal-blocking half of 2, and 3) remain
+enabled in every shimmed mode. Native SDL 1.2 also enables realtime scheduling
+and the doubled mixer buffer. SDL12-compat disables those two audio changes by
+default because its SDL2 audio path does not exhibit the underruns.
+`--no-audio-shim` lets the native SDL 1.2 mode use only signal protection.
+`--no-sigio-shim` disables signal protection while leaving that mode's audio
+choice unchanged, and `--no-shim` disables the entire library for controlled
+A/B testing.
 
 ### Rebuilding
 
