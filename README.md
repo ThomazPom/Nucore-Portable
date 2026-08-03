@@ -71,6 +71,10 @@ APT packages. It does add a system service and polkit rule, and can configure
 display-manager autologin. `./uninstall.sh` reverses those project-owned
 changes.
 
+The installer does not copy the bundle into a system directory: the service
+points back to this live clone. Keep the directory in place. To move it later,
+run `./uninstall.sh`, move the clone, then run `./install.sh` again.
+
 Paul's cabinet video is also an excellent example of Linux tuned as a dedicated
 appliance: the boot is unusually fast and the transition into Nucore is nearly
 seamless. The installer provides the service, autologin and graphical-session
@@ -101,6 +105,7 @@ re-run `./install.sh` if you switch to a GNOME desktop later.
 You'll be asked, one by one:
 
 * default game on boot (`swe1_14` / `rfm_15` / `auto`)
+* optional custom `.cfg` file (blank keeps the launcher defaults)
 * boot the pinbox fork instead of nucore (default no)
 * auto-launch on graphical login (default yes)
 * enable display-manager autologin (default yes), and which user
@@ -159,7 +164,9 @@ polkit rule, strips the sentinel-fenced GDM block(s), deletes the
 SDDM/LightDM drop-ins, `daemon-reload`s. Since `install.sh` never
 touched GDM/SDDM/LightDM beyond its own block, never disabled the
 display manager, never touched `getty` / sleep / notifications, and
-never installed any packages, there is nothing else to restore.
+never installed any packages, there is nothing else to restore. It deliberately
+retains the `.nucore-bak` safety copies because it cannot prove that a backup
+with that name did not predate the installer.
 
 ## Real cabinet I/O
 
@@ -287,6 +294,7 @@ Examples:
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
 | `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
+| `--config FILE` | none | Load a custom Nucore `.cfg`; the file replaces implicit presentation defaults |
 | `--root=run0` | auto | Force systemd `run0` privilege escalation |
 | `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
 | `--root=sudo` | auto | Force classic `sudo` privilege escalation |
@@ -307,6 +315,38 @@ examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
 | `swe1_14` or `swe1` | Star Wars Episode 1 — Revision 1.4 *(default)* |
 | `rfm_15` or `rfm` | Revenge From Mars — Revision 1.5 |
 | `auto` | Ask Nucore to detect the game |
+
+### Use a config file instead of repeating arguments
+
+Nucore can load a complete configuration before the game starts. Copy the
+shipped template, edit it once, and select it through the launcher:
+
+```sh
+cp config/pb2k.cfg config/cabinet.cfg
+nano config/cabinet.cfg
+./start.sh --no-reboot --config config/cabinet.cfg swe1_14
+```
+
+The file covers RGB gamma, fullscreen, screen
+inversion, renderer depth, watermark, jukebox and playlist behavior, USB,
+tournament/server settings, server ports and tick adjustment. It remains an
+ordinary text file in the repository; the launcher does not rewrite it. The
+positional game remains authoritative: omit it for the default `swe1_14`, or
+name `rfm_15` / `auto` as usual.
+
+Selecting `--config` suppresses the launcher's implicit
+`-fullscreen -bpp 16 -nowatermark` baseline, so the file genuinely owns those
+settings. Nucore arguments are still cumulative and optional. If present, they
+come after the config and override it for that run:
+
+```sh
+./start.sh --no-reboot --config config/cabinet.cfg swe1_14 -window
+```
+
+`install.sh` asks for the same optional `.cfg` path and records it in
+`nucore.service`, allowing an installed cabinet to boot entirely from the file
+without a repeated argument list. Keep that file in place while the service is
+installed.
 
 ### Nucore command-line reference recovered from the binary
 
@@ -362,6 +402,11 @@ support all of the public and functional options above, plus these two:
 | `-gamma N` | number `1` through `10` | Set the renderer gamma value; values outside the range are rejected | Presentation tuning |
 | `-nothreads` | none | Disable all Pinbox emulation threads and force 32-bit rendering | Diagnostic fallback only |
 
+On first use, `start.sh` (and the installer) also creates a missing
+`roms/<game>_pinbox.bin` from the corresponding `<game>_nucore.bin`. It never
+overwrites an existing Pinbox file. This is why `--pinbox` does not require a
+manual sound-bank copy after cloning.
+
 For example:
 
 ```sh
@@ -409,10 +454,9 @@ The binary itself accepts `?`, `-h` or `--h` as its first argument to print
 its small embedded help screen. `start.sh` handles `-h` and `--help` as
 launcher help instead.
 
-The binary can also accept a path ending in `.cfg` before the game name and
-prints `Using config file: ...`. The portable launcher intentionally uses the
-shipped `config/pb2k.cfg` path and does not expose arbitrary config paths as a
-normal high-level argument.
+The binary accepts a path ending in `.cfg` before the game name and prints
+`Using config file: ...`; `start.sh --config FILE` exposes this form safely and
+resolves relative paths from the repository root.
 
 Four additional names exist in the parser table: `-net ARG`, `-s`, `-p ARG`
 and `-d ARG`. Disassembly confirms that this Nucore parser recognizes and
@@ -683,10 +727,11 @@ for why `--preload` and not `LD_PRELOAD=`).
 
 ## How the launcher works (one paragraph)
 
-`start.sh` parses `--no-reboot` / `--pinbox` / `--asix` /
-`--sdl12-compat` / `--no-shim` to pick a
-`(runner, binary)` pair, then calls
-`bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. The runner
+`start.sh` parses its runner, SDL, shim, privilege and inhibitor options, plus
+an optional `--config FILE`, then picks a `(runner, binary)` pair and calls
+`bin/bundled.sh <mode> bin/<runner> bin/<binary> [config.cfg] <game> <args>`.
+The config is placed where Nucore expects it, before the game, while explicit
+arguments remain last so they can override config values. The runner
 binary `execv()`s back into `bundled.sh`; the second entry is detected via the
 `_BUNDLED_BINARY` env var and finally exec's the real emulator through the
 bundled `ld-linux.so.2 --preload sigio_fix.so`. Its library path is an

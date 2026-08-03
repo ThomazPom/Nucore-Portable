@@ -1,10 +1,9 @@
 #!/bin/bash
 # uninstall.sh — reverse install.sh.
 #
-# Symmetric with the new install.sh: that script never touched GDM, getty,
-# sleep targets, the default systemd target, or notification daemons, so
-# this script never restores them either. The only artefacts to remove
-# are the systemd unit and the daemon-reload that follows.
+# Symmetric with install.sh: remove its systemd unit, polkit rule and
+# sentinel-fenced/drop-in display-manager autologin settings. install.sh does
+# not touch getty, sleep targets, the default target or notification daemons.
 #
 # bin/nucore-as-root.sh stays in the bundle (it ships with the source
 # tree, not installed under /).
@@ -60,4 +59,4 @@ rmdir /etc/sddm.conf.d 2>/dev/null || true
 rmdir /etc/lightdm/lightdm.conf.d 2>/dev/null || true
 
 echo "=== uninstall complete ==="
-echo "Nothing else was changed by install.sh, so nothing else needs restoring."
+echo "All project-owned system changes made by install.sh were removed."
