@@ -5,6 +5,23 @@ emulator (`nucore`) and its `pinbox` fork. Drop it on a stock Debian 13 (or
 similar) x64 machine, run `./start.sh`, and you get a working pinball without
 ever touching `dpkg --add-architecture i386` or chasing 32-bit `.so` packages.
 
+> [!IMPORTANT]
+> **Real Pinball 2000 cabinet tested.** In August 2026, Paul B. Fedele
+> installed `Nucore-Portable` and confirmed it working on an actual Pinball
+> 2000 cabinet. His video documents the installation, terminal output and
+> running machine:
+> **[watch the real-cabinet installation and test on YouTube](https://www.youtube.com/watch?v=cwnoy5SBgOg)**.
+>
+> **[Original test report](https://github.com/ThomazPom/Encore-Pinball2000/issues/2)**
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=cwnoy5SBgOg">
+    <img src="https://img.youtube.com/vi/cwnoy5SBgOg/hqdefault.jpg"
+         alt="Nucore-Portable installed and running on a real Pinball 2000 cabinet"
+         width="640">
+  </a>
+</p>
+
 ## Quick start
 
 The whole repo is designed to be a **drop-in cabinet brain replacement**:
@@ -30,12 +47,6 @@ so the host never needs `dpkg --add-architecture i386` even once.
 The first command runs Star Wars windowed with the watchdog disabled. Plain
 `./start.sh` selects the production watchdog, which may hard-reboot a cabinet
 PC after a stall; always use `--no-reboot` for desktop experiments.
-
-> ✅ **Cabinet test.** Paul B. Fedele has tested Nucore-Portable on a real
-> Pinball 2000 cabinet and published the complete installation and test:
->
-> * [Full video on YouTube](https://www.youtube.com/watch?v=cwnoy5SBgOg)
-> * [Original test report](https://github.com/ThomazPom/Encore-Pinball2000/issues/2)
 
 ## What's inside the bundle
 
@@ -421,7 +432,7 @@ bin/                  binaries + launcher
   nucore-as-root.sh   in-session bridge used by the systemd unit
   sigio_fix.so        LD_PRELOAD shim — fixes audio + signals on x86_64
   run                 production runner (watchdog, reboots host on stall)
-  runrd                no-reboot runner (clean exit on crash)
+  runrd               no-reboot runner (clean exit on crash)
   run_pb_rd           no-reboot runner for the pinbox fork
   nucore              Nucore 2.25.3R (production target)
   nucore.225          Nucore 2.25 base (kept for archeology)
