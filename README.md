@@ -141,6 +141,19 @@ INFO: sdl12-compat 1.2.68, ... talking to SDL2 2.26.5
 
 The option composes with `--asix`; no files are installed system-wide.
 
+### Experimental launch without `sigio_fix`
+
+To test whether a particular host works without the preload shim:
+
+```sh
+./start.sh --no-reboot --sdl12-compat --no-shim swe1_14 -window
+```
+
+This prints a conspicuous warning and changes only that launch. It is not a
+production recommendation: desktop success does not exercise the real cabinet
+RTC/SIGIO interrupt path, so the shim remains enabled by default. The option
+also works with native SDL 1.2 to support controlled A/B comparisons.
+
 ## Production install (autostart in your graphical session)
 
 ```sh
@@ -384,7 +397,7 @@ for why `--preload` and not `LD_PRELOAD=`).
 ## How the launcher works (one paragraph)
 
 `start.sh` parses `--no-reboot` / `--pinbox` / `--asix` /
-`--sdl12-compat` to pick a
+`--sdl12-compat` / `--no-shim` to pick a
 `(runner, binary)` pair, then calls
 `bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. The runner
 binary `execv()`s back into `bundled.sh`; the second entry is detected via the

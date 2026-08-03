@@ -2,7 +2,7 @@
 # start.sh — quick test launcher for nucore-portable.
 #
 # Usage: ./start.sh [--no-reboot] [--pinbox] [--asix] [--sdl12-compat]
-#                   [--] [game] [extra args...]
+#                   [--no-shim] [--] [game] [extra args...]
 #
 # Production targets (default):
 #   runner = run        (auto-restarts the emulator on crash)
@@ -22,6 +22,8 @@
 #   --sdl12-compat
 #                 EXPERIMENTAL: translate the SDL 1.2 ABI to bundled SDL 2.
 #                 The proven native SDL 1.2 path remains the default.
+#   --no-shim     EXPERIMENTAL: do not preload sigio_fix.so. Safe only for
+#                 testing; the real cabinet RTC/SIGIO path is unverified.
 #
 # game = swe1_14 (default) | rfm_15 | auto
 #   swe1_14   Star Wars Episode 1 - Revision 1.4
@@ -74,6 +76,7 @@ NO_REBOOT=0
 PINBOX=0
 ASIX=0
 SDL12_COMPAT=0
+USE_SHIM=1
 ROOT_PREF=auto
 USE_INHIBIT=1
 
@@ -83,6 +86,7 @@ while [ $# -gt 0 ]; do
         --pinbox)      PINBOX=1;      shift ;;
         --asix)        ASIX=1;        shift ;;
         --sdl12-compat) SDL12_COMPAT=1; shift ;;
+        --no-shim)     USE_SHIM=0;    shift ;;
         --no-root)     ROOT_PREF=none; shift ;;
         --root)        ROOT_PREF="$2"; shift 2 ;;
         --root=*)      ROOT_PREF="${1#--root=}"; shift ;;
@@ -170,7 +174,10 @@ have_caps() {
     [ $(( 0x$hex >> 17 & 1 )) -eq 1 ]
 }
 
-CMD=("$SCRIPT_DIR/bin/bundled.sh" "$MODE" \
+BUNDLE_OPTIONS=()
+[ "$USE_SHIM" -eq 0 ] && BUNDLE_OPTIONS+=(--no-shim)
+
+CMD=("$SCRIPT_DIR/bin/bundled.sh" "${BUNDLE_OPTIONS[@]}" "$MODE" \
      "$SCRIPT_DIR/bin/$RUNNER" \
      "$SCRIPT_DIR/bin/$BINARY" \
      "$GAME" "${ARGS[@]}")

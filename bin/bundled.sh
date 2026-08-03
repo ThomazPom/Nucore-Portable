@@ -4,7 +4,7 @@
 # Wraps the target binary in a self-contained i386 runtime (../bundlex86)
 # so the host needs no `dpkg --add-architecture i386` or system 32-bit libs.
 #
-# Usage: bundled.sh [mode] <runner> <binary> [args...]
+# Usage: bundled.sh [--no-shim] [mode] <runner> <binary> [args...]
 #   portable          — native SDL 1.2 + sigio_fix (default)
 #   asix              — portable + ASIX libftchipid overlay
 #   sdl12-compat      — experimental SDL 1.2 ABI on bundled SDL 2
@@ -35,14 +35,28 @@ set_library_path() {
 # --preload as a flag (env LD_PRELOAD is dropped across the runner→exec wrap).
 if [ -n "$_BUNDLED_BINARY" ]; then
     set_library_path "$_BUNDLED_MODE"
-    exec "$BUNDLE/indirect/ld-linux.so.2" \
-        --inhibit-cache \
-        --preload "$PRELOAD" \
-        --library-path "$LIBPATH" \
-        "$_BUNDLED_BINARY" "$@"
+    if [ "$_BUNDLED_USE_SHIM" = 0 ]; then
+        echo "*** EXPERIMENT: sigio_fix.so is NOT loaded; RTC/SIGIO safety is unverified ***" >&2
+        exec "$BUNDLE/indirect/ld-linux.so.2" \
+            --inhibit-cache \
+            --library-path "$LIBPATH" \
+            "$_BUNDLED_BINARY" "$@"
+    else
+        exec "$BUNDLE/indirect/ld-linux.so.2" \
+            --inhibit-cache \
+            --preload "$PRELOAD" \
+            --library-path "$LIBPATH" \
+            "$_BUNDLED_BINARY" "$@"
+    fi
 fi
 
 # ── Normal invocation ──────────────────────────────────────────────────────────
+USE_SHIM=1
+if [ "$1" = --no-shim ]; then
+    USE_SHIM=0
+    shift
+fi
+
 case "$1" in
     portable|asix|sdl12-compat|sdl12-compat-asix) MODE="$1"; shift ;;
     *)             MODE=portable ;;
@@ -53,7 +67,7 @@ BINARY="$1"; [ "$#" -gt 0 ] && shift
 
 if [ -z "$RUNNER" ] || [ -z "$BINARY" ]; then
     cat >&2 <<EOF
-Usage: $0 [mode] <runner> <binary> [args...]
+Usage: $0 [--no-shim] [mode] <runner> <binary> [args...]
   portable          — native SDL 1.2 + sigio_fix (default)
   asix              — portable + ASIX libftchipid overlay
   sdl12-compat      — experimental SDL 1.2 ABI on SDL 2
@@ -76,6 +90,7 @@ export ALSA_PLUGIN_DIR="$BUNDLE/alsa-lib"
 set_library_path "$MODE"
 
 export _BUNDLED_MODE="$MODE"
+export _BUNDLED_USE_SHIM="$USE_SHIM"
 export _BUNDLED_BINARY="$BINARY"
 exec "$BUNDLE/indirect/ld-linux.so.2" \
     --inhibit-cache \
