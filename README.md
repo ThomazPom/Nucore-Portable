@@ -523,6 +523,67 @@ experiment is from 2011. At the newest end, the SDL bridge is Debian 13's
 span several generations; this project claims provenance only up to those
 named Debian 13 package versions, not that every bundled library is current.
 
+#### Example: update SDL12-compat
+
+This refreshes only the opt-in SDL12-compat library from the
+version currently published by the host's configured Debian repositories. It
+downloads and extracts the i386 package without installing it system-wide,
+keeps the previous file, and updates the overlay symlink:
+
+```sh
+cd Nucore-Portable
+work=$(mktemp -d)
+(cd "$work" && apt download libsdl1.2debian:i386)
+dpkg-deb -x "$work"/libsdl1.2debian_*_i386.deb "$work/root"
+candidate=$(find "$work/root" -type f -name 'libSDL-1.2.so.*' | head -n 1)
+file "$candidate"
+readelf -d "$candidate" | sed -n '/NEEDED/p'
+cp -a bundlex86/sdl12-compat/libSDL-1.2.so.1.2.68 \
+  bundlex86/sdl12-compat/libSDL-1.2.so.1.2.68.previous
+install -m 0644 "$candidate" "bundlex86/sdl12-compat/$(basename "$candidate")"
+ln -sfn "$(basename "$candidate")" bundlex86/sdl12-compat/libSDL-1.2.so.0
+SDL12COMPAT_DEBUG_LOGGING=1 ./start.sh --no-reboot --sdl12-compat swe1_14 -window
+```
+
+This is an update procedure, not an assurance that the new build is better or
+that all of its dependencies are already bundled. Confirm the printed version,
+video, input and audio before removing the `.previous` rollback copy. The
+command follows whatever Debian suite is configured in APT; it does not claim
+to fetch a release newer than that suite.
+
+#### Example: test a newer FTDI D2XX library
+
+FTDI distributes D2XX separately rather than through Debian. Download the
+**Linux x86 (32-bit)** archive from the [official FTDI D2XX page](https://ftdichip.com/drivers/d2xx-drivers/),
+leave it in `~/Downloads`, then stage it as another opt-in overlay:
+
+```sh
+cd Nucore-Portable
+work=$(mktemp -d)
+archive=$(find "$HOME/Downloads" -maxdepth 1 -type f \
+  \( -name 'libftd2xx*.tar.gz' -o -name 'libftd2xx*.tgz' \) | head -n 1)
+tar -xf "$archive" -C "$work"
+candidate=$(find "$work" -type f -path '*/release/build/libftd2xx.so.*' | head -n 1)
+file "$candidate"                    # must report 32-bit Intel i386
+readelf -d "$candidate" | sed -n '/SONAME\|NEEDED/p'
+cp -a bundlex86/direct/libftd2xx.so.0 \
+  bundlex86/direct/libftd2xx.so.0.previous
+install -m 0644 "$candidate" bundlex86/direct/libftd2xx.so.0
+./start.sh --no-reboot swe1_14 -window
+```
+
+Restore immediately if the test fails:
+
+```sh
+mv -f bundlex86/direct/libftd2xx.so.0.previous \
+  bundlex86/direct/libftd2xx.so.0
+```
+
+A new D2XX release can change its required glibc baseline or runtime behavior
+even when its SONAME looks compatible. It also does not update `libftchipid`:
+those are separate libraries and must be evaluated separately. Keep such a
+change local until desktop and real-cabinet tests pass.
+
 #### Choosing an SDL implementation
 
 Neither SDL choice is universally "better"; they optimize for different
