@@ -54,7 +54,7 @@ fi
 
 # ── Normal invocation ──────────────────────────────────────────────────────────
 USE_SHIM=1
-SHIM_AUDIO=auto
+SHIM_AUDIO=1
 SHIM_SIGIO=1
 while :; do
     case "$1" in
@@ -69,13 +69,6 @@ case "$1" in
     portable|asix|sdl12-compat|sdl12-compat-asix) MODE="$1"; shift ;;
     *)             MODE=portable ;;
 esac
-
-if [ "$SHIM_AUDIO" = auto ]; then
-    case "$MODE" in
-        sdl12-compat|sdl12-compat-asix) SHIM_AUDIO=0 ;;
-        *)                              SHIM_AUDIO=1 ;;
-    esac
-fi
 
 RUNNER="$1"; [ "$#" -gt 0 ] && shift
 BINARY="$1"; [ "$#" -gt 0 ] && shift

@@ -27,7 +27,7 @@
 #                 testing; the real cabinet RTC/SIGIO path is unverified.
 #   --no-audio-shim
 #                 keep RTC/SIGIO protection but disable its audio interventions.
-#                 Default: on for native SDL 1.2, off for SDL12-compat/SDL 2.
+#                 Audio protection is enabled by default in every SDL mode.
 #   --no-sigio-shim
 #                 keep audio interventions but disable RTC/SIGIO protection.
 #                 Diagnostic only: this may restore the legacy boot/crash bug.
@@ -84,7 +84,7 @@ PINBOX=0
 ASIX=0
 SDL12_COMPAT=0
 USE_SHIM=1
-SHIM_AUDIO=auto
+SHIM_AUDIO=1
 SHIM_SIGIO=1
 ROOT_PREF=auto
 USE_INHIBIT=1

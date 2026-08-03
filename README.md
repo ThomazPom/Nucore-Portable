@@ -5,14 +5,15 @@ emulator (`nucore`) and its `pinbox` fork. Drop it on a stock Debian 13 (or
 similar) x64 machine, run `./start.sh`, and you get a working pinball without
 ever touching `dpkg --add-architecture i386` or chasing 32-bit `.so` packages.
 
-## Drop-in summary
+## Quick start
 
 The whole repo is designed to be a **drop-in cabinet brain replacement**:
 
 ```sh
 git clone <this-repo> nucore-portable
 cd nucore-portable
-./start.sh --no-reboot -window  # safe desktop smoke test, no install needed
+./start.sh --no-reboot swe1_14 -window  # safe desktop test, no install needed
+./start.sh --no-reboot swe1_14 -fullscreen -bpp 16
 ./install.sh         # turn the box into a Pinball-2000 cabinet:
                      #   • autostarts on graphical login
                      #   • cross-distro display-manager autologin
@@ -25,6 +26,10 @@ pollution, no `/usr/local` writes outside the systemd / polkit /
 display-manager drop-ins (all of which `./uninstall.sh` reverses
 cleanly). The bundle ships with its own i386 loader and shared libs,
 so the host never needs `dpkg --add-architecture i386` even once.
+
+The first command runs Star Wars windowed with the watchdog disabled. Plain
+`./start.sh` selects the production watchdog, which may hard-reboot a cabinet
+PC after a stall; always use `--no-reboot` for desktop experiments.
 
 > ⚠️ **Cabinet status.** This *specific bundle* has not yet been tested
 > in a real Pinball 2000 cabinet — only on desktop x86_64 hosts with the
@@ -56,26 +61,6 @@ The point of this repo is the **bundle around `nucore`**, not nucore itself:
 
 `nucore` itself is the upstream Big Guy's Pinball 2.25.3R build (extracted from
 the official Lubuntu deb in FlipperFiles). It is not modified here.
-
-## Quickstart: choose the safe command first
-
-```sh
-git clone <this-repo> nucore-portable
-cd nucore-portable
-./start.sh --no-reboot swe1_14 -window
-```
-
-That command is the recommended first desktop test: Star Wars, windowed,
-native SDL 1.2, shim enabled, and **no host reboot if the emulator fails**.
-Once that works, try fullscreen:
-
-```sh
-./start.sh --no-reboot swe1_14 -fullscreen -bpp 16
-```
-
-> **Safety:** plain `./start.sh` selects the production watchdog. On a stall,
-> that runner is designed to hard-reboot a cabinet PC. Always add
-> `--no-reboot` for desktop experiments.
 
 ### Command shape
 
@@ -123,7 +108,7 @@ Examples:
 | `--asix` | off | Add the ASIX `libftchipid` overlay for USB-to-serial cabinet I/O |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
-| `--no-audio-shim` | automatic | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
+| `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
 | `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
 | `--root=run0` | auto | Force systemd `run0` privilege escalation |
 | `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
@@ -268,14 +253,17 @@ as historical binaries and are not selected by `start.sh`.
 | `--pinbox` | `run` | `pinbox` | Production Pinbox watchdog |
 | `--pinbox --no-reboot` | `run_pb_rd` | `pinbox_nwd` | Safe Pinbox desktop testing |
 
-The SDL implementation and shim are independent of this table. This produces
-four useful A/B combinations:
+The SDL implementation and the two shim halves are independent:
 
 | SDL implementation | Shim | Command fragment | Status |
 |---|---|---|---|
 | Native SDL 1.2 | enabled | `--no-reboot` | Established default |
+| Native SDL 1.2 | signal only | `--no-reboot --no-audio-shim` | Diagnose audio intervention |
+| Native SDL 1.2 | audio only | `--no-reboot --no-sigio-shim` | Diagnose signal intervention; boot may fail |
 | Native SDL 1.2 | disabled | `--no-reboot --no-shim` | Experimental |
-| SDL 1.2 API on SDL 2 | signal fixes only | `--no-reboot --sdl12-compat` | Experimental modernization; SDL2 handles audio buffering |
+| SDL 1.2 API on SDL 2 | enabled | `--no-reboot --sdl12-compat` | Experimental modernization |
+| SDL 1.2 API on SDL 2 | signal only | `--no-reboot --sdl12-compat --no-audio-shim` | Known to risk audio underruns |
+| SDL 1.2 API on SDL 2 | audio only | `--no-reboot --sdl12-compat --no-sigio-shim` | Boot-safety experiment |
 | SDL 1.2 API on SDL 2 | disabled | `--no-reboot --sdl12-compat --no-shim` | Most experimental |
 
 Copy-paste A/B test:
@@ -552,14 +540,12 @@ safety and audio stabilization:
    error path the original binary takes when it's already at the
    requested priority.
 
-The signal protections (1, the signal-blocking half of 2, and 3) remain
-enabled in every shimmed mode. Native SDL 1.2 also enables realtime scheduling
-and the doubled mixer buffer. SDL12-compat disables those two audio changes by
-default because its SDL2 audio path does not exhibit the underruns.
-`--no-audio-shim` lets the native SDL 1.2 mode use only signal protection.
-`--no-sigio-shim` disables signal protection while leaving that mode's audio
-choice unchanged, and `--no-shim` disables the entire library for controlled
-A/B testing.
+The signal protections (1, the signal-blocking half of 2, and 3) and audio
+protections are enabled by default with both native SDL 1.2 and SDL12-compat;
+both paths can underrun without the audio half. `--no-audio-shim` leaves only
+signal protection. `--no-sigio-shim` disables signal protection while leaving
+that mode's audio choice unchanged, and `--no-shim` disables the entire
+library for controlled A/B testing.
 
 ### Rebuilding
 
