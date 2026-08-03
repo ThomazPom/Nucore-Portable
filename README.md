@@ -31,15 +31,11 @@ The first command runs Star Wars windowed with the watchdog disabled. Plain
 `./start.sh` selects the production watchdog, which may hard-reboot a cabinet
 PC after a stall; always use `--no-reboot` for desktop experiments.
 
-> ⚠️ **Cabinet status.** This *specific bundle* has not yet been tested
-> in a real Pinball 2000 cabinet — only on desktop x86_64 hosts with the
-> screen + audio paths exercised, and the LPT / ASIX cabinet-I/O code
-> paths inherited unchanged from upstream. The `nucore` binary itself
-> (Big Guy's Pinball 2.25.3R, shipped here unmodified) **is** known to
-> drive thousands of Pinball 2000 machines successfully in the wild;
-> what is unproven here is only this bundle's specific glue (the
-> sigio_fix shim, the systemd unit, the autologin/session-binding
-> wrapper). Real-cabinet reports very welcome.
+> ✅ **Cabinet test.** Paul B. Fedele has tested Nucore-Portable on a real
+> Pinball 2000 cabinet and published the complete installation and test:
+>
+> * [Full video on YouTube](https://www.youtube.com/watch?v=cwnoy5SBgOg)
+> * [Original test report](https://github.com/ThomazPom/Encore-Pinball2000/issues/2)
 
 ## What's inside the bundle
 
@@ -425,7 +421,7 @@ bin/                  binaries + launcher
   nucore-as-root.sh   in-session bridge used by the systemd unit
   sigio_fix.so        LD_PRELOAD shim — fixes audio + signals on x86_64
   run                 production runner (watchdog, reboots host on stall)
-  runrd               no-reboot runner (clean exit on crash)
+  runrd                no-reboot runner (clean exit on crash)
   run_pb_rd           no-reboot runner for the pinbox fork
   nucore              Nucore 2.25.3R (production target)
   nucore.225          Nucore 2.25 base (kept for archeology)
