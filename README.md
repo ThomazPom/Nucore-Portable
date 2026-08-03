@@ -166,6 +166,26 @@ never installed any packages, there is nothing else to restore.
 * **LPT (parallel port)**: `./start.sh swe1_14 -parallel 0x378`
 * **USB-to-serial via ASIX FTDI**: `./start.sh --asix swe1_14`
 
+### Nucore function keys
+
+These are Nucore controls, not launcher shortcuts:
+
+| Key | Function |
+|---|---|
+| `F1` | Exit Nucore; after cabinet integration this returns to the desktop |
+| `F2` | Toggle the screen upside down, useful while servicing the display |
+| `F3` | Decrease GI/light timing by one fine step |
+| `F4` | Increase GI/light timing by one fine step |
+| `F5` | Decrease GI/light timing by one coarse step |
+| `F6` | Increase GI/light timing by one coarse step |
+
+The F3–F6 adjustments compensate for GI-light flicker caused by timing
+differences between PCs. Nucore saves the selected timing. The playfield relay
+may click while it is being adjusted; the original manual says this is
+expected. No Nucore functions are documented for F7–F12.
+
+Source: [Nucore User Manual, revision 2.0A, “Nucore Keyboard Commands”](https://o.pinside.com/c/58/34/c5834df1bceaaa90b4b77475b3e32b0c27742530.pdf).
+
 ## Community updates (mypinballs.com)
 
 After Williams shipped the last official Pinball 2000 firmware in
