@@ -13,6 +13,18 @@ ever touching `dpkg --add-architecture i386` or chasing 32-bit `.so` packages.
 > **[watch the real-cabinet installation and test on YouTube](https://www.youtube.com/watch?v=cwnoy5SBgOg)**.
 >
 > **[Original test report](https://github.com/ThomazPom/Encore-Pinball2000/issues/2)**
+>
+> The repository HEAD used for that August 2 test was commit
+> [`81b0f72`](https://github.com/ThomazPom/Nucore-Portable/commit/81b0f72638940459e794c7bf042e3d08d46daa3b).
+> To clone that exact historical cabinet-tested snapshot instead of current
+> `main`:
+>
+> ```sh
+> git clone https://github.com/ThomazPom/Nucore-Portable.git && git -C Nucore-Portable switch --detach 81b0f72
+> ```
+>
+> Current users should normally clone `main`; the pinned command exists to
+> make the cabinet-test claim reproducible.
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=cwnoy5SBgOg">
