@@ -515,6 +515,14 @@ an old, known behavior for a newer but less cabinet-tested one. Use the smallest
 change that solves an observed problem; the native SDL 1.2 path with the full
 shim remains the default.
 
+“Modern” is relative to Nucore, not shorthand for “latest.” The original
+Nucore package is from 2018 and includes still older dependencies (the bundled
+FTDI D2XX library is approximately 2010). The optional ASIX `libftchipid` 0.1.0
+experiment is from 2011. At the newest end, the SDL bridge is Debian 13's
+`sdl12-compat` 1.2.68-3 running over bundled SDL 2.26.5. Thus the alternatives
+span several generations; this project claims provenance only up to those
+named Debian 13 package versions, not that every bundled library is current.
+
 #### Choosing an SDL implementation
 
 Neither SDL choice is universally "better"; they optimize for different
