@@ -60,26 +60,162 @@ The first command runs Star Wars windowed with the watchdog disabled. Plain
 `./start.sh` selects the production watchdog, which may hard-reboot a cabinet
 PC after a stall; always use `--no-reboot` for desktop experiments.
 
-## What's inside the bundle
+## Restore a cabinet (production install)
 
-The point of this repo is the **bundle around `nucore`**, not nucore itself:
+```sh
+./install.sh
+```
 
-* a curated set of i386 shared libraries (`bundlex86/`, ~37 MB)
-* a bundled `ld-linux.so.2` so the host's loader is never used
-* a small launcher (`bin/bundled.sh`) that re-execs the binary through the
-  bundled loader with a runtime-injected `sigio_fix.so` by default
-* `src/sigio_fix.c` (+ `Makefile`) — the LD_PRELOAD shim that makes the
-  legacy 32-bit audio + signal pipeline survive on modern x86_64 kernels
-  (shipped pre-built as `bin/sigio_fix.so`; rebuild with `make`)
-* `start.sh` for quick testing in any graphical session
-* `install.sh` for production: a tiny systemd unit that runs the
-  emulator as root **inside your existing graphical session**, plus
-  optional cross-distro display-manager autologin (GDM / SDDM /
-  LightDM). No kiosk transformation, no GDM/SDDM/LightDM disable,
-  no `getty` fight, no extra apt packages.
+(`install.sh` re-launches itself under `run0` / `sudo` / `pkexec`
+automatically — no need to be in the sudoers file on Debian 13.)
 
-`nucore` itself is the upstream Big Guy's Pinball 2.25.3R build (extracted from
-the official Lubuntu deb in FlipperFiles). It is not modified here.
+This install is deliberately **non-invasive**. It does **not** disable
+GDM/SDDM/LightDM, does **not** change the default systemd target, does
+**not** touch `getty@tty1`, does **not** mask sleep/suspend/hibernate,
+does **not** mask notification daemons, and does **not** install any
+apt packages. The desktop you have today is the desktop you have
+tomorrow — nucore just shows up fullscreen on top of it.
+
+### What gets written
+
+| Path | Purpose |
+|---|---|
+| `/etc/systemd/system/nucore.service` | root-owned unit, `WantedBy=graphical.target`, runs `bin/nucore-as-root.sh` |
+| `/etc/polkit-1/rules.d/49-nucore.rules` | scoped to `nucore.service` only — lets the active local-session user `systemctl start nucore` without password |
+| `/etc/gdm3/daemon.conf` *(if GDM installed)* | sentinel-fenced `[daemon] AutomaticLogin=…` block; `.nucore-bak` backup created |
+| `/etc/gdm/custom.conf` *(if Fedora/Arch GDM installed)* | same as above |
+| `/etc/sddm.conf.d/49-nucore.conf` | drop-in `[Autologin] User=…` for SDDM (Kubuntu, KDE neon, openSUSE-Plasma, Manjaro-KDE) |
+| `/etc/lightdm/lightdm.conf.d/49-nucore.conf` | drop-in `[Seat:*] autologin-user=…` for LightDM (Lubuntu, Xubuntu, Mint XFCE/Cinnamon) |
+
+Polkit, GDM, SDDM and LightDM are all configured via files only — no
+new packages get installed. The SDDM and LightDM drop-ins are written
+**unconditionally**, so if you later `apt install kubuntu-desktop`
+(pulling in SDDM) the autologin keeps working with no second `install.sh`
+run. GDM is the one exception (its config dirs are package-owned), so
+re-run `./install.sh` if you switch to a GNOME desktop later.
+
+### Interactive prompts
+
+You'll be asked, one by one:
+
+* default game on boot (`swe1_14` / `rfm_15` / `auto`)
+* boot the pinbox fork instead of nucore (default no)
+* auto-launch on graphical login (default yes)
+* enable display-manager autologin (default yes), and which user
+
+`install.sh` defaults the autologin user to whoever invoked it
+(detected via `$SUDO_UID` / `$PKEXEC_UID` / `logname` — i.e. you).
+
+### Boot flow after install
+
+1. The box boots normally → display manager (GDM/SDDM/LightDM) appears
+   exactly as before, then **autologins straight to your desktop**.
+2. `nucore.service` starts in parallel and waits for **two** signals
+   before doing anything visible:
+    * an active local user session (`Class=user`, `uid >= 1000`) — so
+      it never attaches to the greeter session by mistake;
+    * your `--user` `graphical-session.target` is `active` — i.e. your
+      gnome-shell / KWin / XFCE session has finished its own startup
+      (panel painted, autostart apps launched). This is the canonical
+      "desktop is fully up" signal on every modern systemd desktop.
+3. Wrapper harvests the session env (`DISPLAY`, `WAYLAND_DISPLAY`,
+   `XAUTHORITY`, **`DBUS_SESSION_BUS_ADDRESS`**, `XDG_SESSION_ID`,
+   `XDG_SESSION_TYPE`, `XDG_RUNTIME_DIR`) directly from
+   `systemctl --user show-environment`.
+4. `systemd-run --scope --slice=user-<uid>.slice --uid=0` launches the
+   emulator **inside your user's own slice**. From the compositor's
+   point of view nucore is a regular session app (just one that happens
+   to be euid=0); it gets keyboard focus, plays nicely with screen
+   savers, and exits clean to your desktop on `Esc` / F1.
+5. A 3-second-deferred background helper calls
+   `org.gnome.Shell.OverviewActive=false` (GNOME) or
+   `org.kde.KWin.Effect.Overview1.deactivate` (KDE) over D-Bus, so
+   freshly-autologged-in sessions don't leave nucore behind the
+   Activities/Overview launcher.
+6. `Esc` / F1 → nucore exits → the transient scope vanishes → the unit
+   exits → you are back at your normal desktop. The unit only restarts
+   on **failure** (`Restart=on-failure` with a 3-burst limit), never
+   on a clean exit, so you can put the desktop on top intentionally.
+
+### Manual control after install
+
+```sh
+systemctl start nucore          # start without rebooting (no auth prompt)
+journalctl -u nucore -f         # follow logs
+systemctl disable nucore        # stop autostarting at login
+systemctl stop nucore           # close it from outside
+```
+
+### Reverse everything
+
+```sh
+./uninstall.sh
+```
+
+`uninstall.sh` is symmetric: stops the unit, removes the unit + the
+polkit rule, strips the sentinel-fenced GDM block(s), deletes the
+SDDM/LightDM drop-ins, `daemon-reload`s. Since `install.sh` never
+touched GDM/SDDM/LightDM beyond its own block, never disabled the
+display manager, never touched `getty` / sleep / notifications, and
+never installed any packages, there is nothing else to restore.
+
+## Real cabinet I/O
+
+* **LPT (parallel port)**: `./start.sh swe1_14 -parallel 0x378`
+* **USB-to-serial via ASIX FTDI**: `./start.sh --asix swe1_14`
+
+## Community updates (mypinballs.com)
+
+After Williams shipped the last official Pinball 2000 firmware in
+September 2003, the platform has continued to be maintained by
+**Jim Askey** at <https://mypinballs.com>. He produces newer firmware
+revisions for both titles that add bug fixes, audio fixes, new
+lighting / colour effects, and other gameplay refinements that the
+community has wanted for years.
+
+`nucore-portable` runs these bundles fine — they are **not**
+"unsupported." The only thing this repo does **not** do is
+redistribute the bundle files, at Jim's request. Please grab the
+latest builds from his site directly so the version numbers you see
+are always the current ones, and so the project that is keeping these
+games alive stays supported.
+
+| Game | Community version | Files (inside the 7z) start with |
+|------|------------------:|----------------------------------|
+| SWE1 | v2.10             | `pin2000_50069_0210_*`           |
+| RFM  | v2.50             | `pin2000_50070_0250_*`           |
+| RFM  | v2.60             | `pin2000_50070_0260_*`           |
+
+nucore only loads **one** update at a time, and the `*_update.bin`
+file must sit at the **root** of `update/`. To install a community
+bundle:
+
+1. Wipe the `update/` folder so no stale firmware files are left
+   behind. Mixing files from two different firmware versions is the
+   most common cause of boot failures.
+   ```sh
+   rm -rf update/*
+   ```
+2. Open the community archive, browse into whatever subfolder
+   contains the `*_update.bin` plus the `pin2000_*` files /
+   `gamelist.txt`, and extract those files **directly into** the
+   now-empty `update/` folder — flat, no nested per-game directory.
+3. Launch as usual. The game version printed on the boot screen
+   should now reflect the community firmware.
+
+To return to the official Williams firmware, repeat with the original
+payload (a fresh `git checkout -- update/` from a clean clone is the
+easiest way).
+
+> **About the `.exe` files on mypinballs.com.** Despite the
+> extension, the distributed bundles are plain archives — the `.exe`
+> wrapper is just a self-extractor for Windows. On Linux / macOS any
+> archive manager that understands the underlying format will list
+> and extract their contents directly; you do not need to run the
+> executable. Pick whatever extractor you already have installed and
+> point it at the `.exe`.
+
+## Running and configuring Nucore
 
 ### Command shape
 
@@ -370,104 +506,26 @@ After `./install.sh`, the system unit already runs with the required privilege
 and launches Nucore inside the logged-in user's slice. See “Privileges” below
 for the detailed flow.
 
-## Production install (autostart in your graphical session)
+## What's inside the bundle
 
-```sh
-./install.sh
-```
+The point of this repo is the **bundle around `nucore`**, not nucore itself:
 
-(`install.sh` re-launches itself under `run0` / `sudo` / `pkexec`
-automatically — no need to be in the sudoers file on Debian 13.)
+* a curated set of i386 shared libraries (`bundlex86/`, ~37 MB)
+* a bundled `ld-linux.so.2` so the host's loader is never used
+* a small launcher (`bin/bundled.sh`) that re-execs the binary through the
+  bundled loader with a runtime-injected `sigio_fix.so` by default
+* `src/sigio_fix.c` (+ `Makefile`) — the LD_PRELOAD shim that makes the
+  legacy 32-bit audio + signal pipeline survive on modern x86_64 kernels
+  (shipped pre-built as `bin/sigio_fix.so`; rebuild with `make`)
+* `start.sh` for quick testing in any graphical session
+* `install.sh` for production: a tiny systemd unit that runs the
+  emulator as root **inside your existing graphical session**, plus
+  optional cross-distro display-manager autologin (GDM / SDDM /
+  LightDM). No kiosk transformation, no GDM/SDDM/LightDM disable,
+  no `getty` fight, no extra apt packages.
 
-This install is deliberately **non-invasive**. It does **not** disable
-GDM/SDDM/LightDM, does **not** change the default systemd target, does
-**not** touch `getty@tty1`, does **not** mask sleep/suspend/hibernate,
-does **not** mask notification daemons, and does **not** install any
-apt packages. The desktop you have today is the desktop you have
-tomorrow — nucore just shows up fullscreen on top of it.
-
-### What gets written
-
-| Path | Purpose |
-|---|---|
-| `/etc/systemd/system/nucore.service` | root-owned unit, `WantedBy=graphical.target`, runs `bin/nucore-as-root.sh` |
-| `/etc/polkit-1/rules.d/49-nucore.rules` | scoped to `nucore.service` only — lets the active local-session user `systemctl start nucore` without password |
-| `/etc/gdm3/daemon.conf` *(if GDM installed)* | sentinel-fenced `[daemon] AutomaticLogin=…` block; `.nucore-bak` backup created |
-| `/etc/gdm/custom.conf` *(if Fedora/Arch GDM installed)* | same as above |
-| `/etc/sddm.conf.d/49-nucore.conf` | drop-in `[Autologin] User=…` for SDDM (Kubuntu, KDE neon, openSUSE-Plasma, Manjaro-KDE) |
-| `/etc/lightdm/lightdm.conf.d/49-nucore.conf` | drop-in `[Seat:*] autologin-user=…` for LightDM (Lubuntu, Xubuntu, Mint XFCE/Cinnamon) |
-
-Polkit, GDM, SDDM and LightDM are all configured via files only — no
-new packages get installed. The SDDM and LightDM drop-ins are written
-**unconditionally**, so if you later `apt install kubuntu-desktop`
-(pulling in SDDM) the autologin keeps working with no second `install.sh`
-run. GDM is the one exception (its config dirs are package-owned), so
-re-run `./install.sh` if you switch to a GNOME desktop later.
-
-### Interactive prompts
-
-You'll be asked, one by one:
-
-* default game on boot (`swe1_14` / `rfm_15` / `auto`)
-* boot the pinbox fork instead of nucore (default no)
-* auto-launch on graphical login (default yes)
-* enable display-manager autologin (default yes), and which user
-
-`install.sh` defaults the autologin user to whoever invoked it
-(detected via `$SUDO_UID` / `$PKEXEC_UID` / `logname` — i.e. you).
-
-### Boot flow after install
-
-1. The box boots normally → display manager (GDM/SDDM/LightDM) appears
-   exactly as before, then **autologins straight to your desktop**.
-2. `nucore.service` starts in parallel and waits for **two** signals
-   before doing anything visible:
-    * an active local user session (`Class=user`, `uid >= 1000`) — so
-      it never attaches to the greeter session by mistake;
-    * your `--user` `graphical-session.target` is `active` — i.e. your
-      gnome-shell / KWin / XFCE session has finished its own startup
-      (panel painted, autostart apps launched). This is the canonical
-      "desktop is fully up" signal on every modern systemd desktop.
-3. Wrapper harvests the session env (`DISPLAY`, `WAYLAND_DISPLAY`,
-   `XAUTHORITY`, **`DBUS_SESSION_BUS_ADDRESS`**, `XDG_SESSION_ID`,
-   `XDG_SESSION_TYPE`, `XDG_RUNTIME_DIR`) directly from
-   `systemctl --user show-environment`.
-4. `systemd-run --scope --slice=user-<uid>.slice --uid=0` launches the
-   emulator **inside your user's own slice**. From the compositor's
-   point of view nucore is a regular session app (just one that happens
-   to be euid=0); it gets keyboard focus, plays nicely with screen
-   savers, and exits clean to your desktop on `Esc` / F1.
-5. A 3-second-deferred background helper calls
-   `org.gnome.Shell.OverviewActive=false` (GNOME) or
-   `org.kde.KWin.Effect.Overview1.deactivate` (KDE) over D-Bus, so
-   freshly-autologged-in sessions don't leave nucore behind the
-   Activities/Overview launcher.
-6. `Esc` / F1 → nucore exits → the transient scope vanishes → the unit
-   exits → you are back at your normal desktop. The unit only restarts
-   on **failure** (`Restart=on-failure` with a 3-burst limit), never
-   on a clean exit, so you can put the desktop on top intentionally.
-
-### Manual control after install
-
-```sh
-systemctl start nucore          # start without rebooting (no auth prompt)
-journalctl -u nucore -f         # follow logs
-systemctl disable nucore        # stop autostarting at login
-systemctl stop nucore           # close it from outside
-```
-
-### Reverse everything
-
-```sh
-./uninstall.sh
-```
-
-`uninstall.sh` is symmetric: stops the unit, removes the unit + the
-polkit rule, strips the sentinel-fenced GDM block(s), deletes the
-SDDM/LightDM drop-ins, `daemon-reload`s. Since `install.sh` never
-touched GDM/SDDM/LightDM beyond its own block, never disabled the
-display manager, never touched `getty` / sleep / notifications, and
-never installed any packages, there is nothing else to restore.
+`nucore` itself is the upstream Big Guy's Pinball 2.25.3R build (extracted from
+the official Lubuntu deb in FlipperFiles). It is not modified here.
 
 ## What's in the box
 
@@ -509,57 +567,6 @@ config/               leds.cfg, pb2k.cfg, servers.txt
 music/                jukebox playlist landing zone (empty by default)
 install/              upstream nucore install assets (kept for reference)
 ```
-
-## Community updates (mypinballs.com)
-
-After Williams shipped the last official Pinball 2000 firmware in
-September 2003, the platform has continued to be maintained by
-**Jim Askey** at <https://mypinballs.com>. He produces newer firmware
-revisions for both titles that add bug fixes, audio fixes, new
-lighting / colour effects, and other gameplay refinements that the
-community has wanted for years.
-
-`nucore-portable` runs these bundles fine — they are **not**
-"unsupported." The only thing this repo does **not** do is
-redistribute the bundle files, at Jim's request. Please grab the
-latest builds from his site directly so the version numbers you see
-are always the current ones, and so the project that is keeping these
-games alive stays supported.
-
-| Game | Community version | Files (inside the 7z) start with |
-|------|------------------:|----------------------------------|
-| SWE1 | v2.10             | `pin2000_50069_0210_*`           |
-| RFM  | v2.50             | `pin2000_50070_0250_*`           |
-| RFM  | v2.60             | `pin2000_50070_0260_*`           |
-
-nucore only loads **one** update at a time, and the `*_update.bin`
-file must sit at the **root** of `update/`. To install a community
-bundle:
-
-1. Wipe the `update/` folder so no stale firmware files are left
-   behind. Mixing files from two different firmware versions is the
-   most common cause of boot failures.
-   ```sh
-   rm -rf update/*
-   ```
-2. Open the community archive, browse into whatever subfolder
-   contains the `*_update.bin` plus the `pin2000_*` files /
-   `gamelist.txt`, and extract those files **directly into** the
-   now-empty `update/` folder — flat, no nested per-game directory.
-3. Launch as usual. The game version printed on the boot screen
-   should now reflect the community firmware.
-
-To return to the official Williams firmware, repeat with the original
-payload (a fresh `git checkout -- update/` from a clean clone is the
-easiest way).
-
-> **About the `.exe` files on mypinballs.com.** Despite the
-> extension, the distributed bundles are plain archives — the `.exe`
-> wrapper is just a self-extractor for Windows. On Linux / macOS any
-> archive manager that understands the underlying format will list
-> and extract their contents directly; you do not need to run the
-> executable. Pick whatever extractor you already have installed and
-> point it at the `.exe`.
 
 ## `sigio_fix.so` — default protection for audio, threads and signals
 
@@ -652,11 +659,6 @@ optional overlay followed by `bundlex86/direct:bundlex86/indirect`. Passing
 `--preload` to `ld-linux` directly (instead of `LD_PRELOAD=`) is what makes
 the default preload survive the runner→exec wrap. `--no-shim` deliberately
 omits that loader argument for the current launch.
-
-## Real cabinet I/O
-
-* **LPT (parallel port)**: `./start.sh swe1_14 -parallel 0x378`
-* **USB-to-serial via ASIX FTDI**: `./start.sh --asix swe1_14`
 
 ## Caveats
 
