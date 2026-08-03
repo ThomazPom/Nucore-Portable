@@ -6,7 +6,7 @@
 #
 # Usage: bundled.sh [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
 #   portable          — native SDL 1.2 + sigio_fix (default)
-#   asix              — portable + ASIX libftchipid overlay
+#   asix              — portable + alternate legacy library overlay
 #   sdl12-compat      — experimental SDL 1.2 ABI on bundled SDL 2
 #   sdl12-compat-asix — sdl12-compat + ASIX overlay
 #
@@ -77,7 +77,7 @@ if [ -z "$RUNNER" ] || [ -z "$BINARY" ]; then
     cat >&2 <<EOF
 Usage: $0 [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
   portable          — native SDL 1.2 + sigio_fix (default)
-  asix              — portable + ASIX libftchipid overlay
+  asix              — portable + alternate legacy library overlay
   sdl12-compat      — experimental SDL 1.2 ABI on SDL 2
   sdl12-compat-asix — sdl12-compat + ASIX overlay
 EOF

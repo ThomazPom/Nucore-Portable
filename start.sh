@@ -20,7 +20,9 @@
 #                     --no-reboot             runrd      + nucore_nwd
 #                     --pinbox                run        + pinbox
 #                     --pinbox --no-reboot    run_pb_rd  + pinbox_nwd
-#   --asix        load the ASIX libftchipid overlay (USB-to-serial cabinet I/O).
+#   --asix        opt into the alternate legacy library overlay named "asix".
+#                 It selects an alternate libltdl build (plus a matching
+#                 libftd2xx entry); it does not enable a separate USB mode.
 #   --sdl12-compat
 #                 EXPERIMENTAL: translate the SDL 1.2 ABI to bundled SDL 2.
 #                 The proven native SDL 1.2 path remains the default.
@@ -49,7 +51,7 @@
 #   ./start.sh --no-reboot rfm_15              # safe testing: runrd + nucore_nwd + rfm_15
 #   ./start.sh --pinbox swe1_14                # production pinbox fork on swe1_14
 #   ./start.sh --pinbox --no-reboot rfm_15     # safe testing of pinbox on rfm_15
-#   ./start.sh --asix swe1_14 -parallel 0x378  # production with ASIX + LPT cabinet I/O
+#   ./start.sh --asix swe1_14                  # production with alternate legacy libs
 #
 # Privilege escalation:
 #   nucore needs CAP_SYS_RAWIO (parallel-port ioperm) and CAP_SYS_NICE

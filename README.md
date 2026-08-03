@@ -171,7 +171,7 @@ with that name did not predate the installer.
 ## Real cabinet I/O
 
 * **LPT (parallel port)**: `./start.sh swe1_14 -parallel 0x378`
-* **USB-to-serial via ASIX FTDI**: `./start.sh --asix swe1_14`
+* **Alternate legacy libraries**: `./start.sh --asix swe1_14`
 
 ### Nucore function keys
 
@@ -267,7 +267,9 @@ Examples:
 
 # Cabinet I/O
 ./start.sh --no-reboot swe1_14 -parallel 0x378
-./start.sh --asix --no-reboot swe1_14 -parallel 0x378
+
+# Optional alternate library set (historically named "asix")
+./start.sh --asix --no-reboot swe1_14
 
 # Production cabinet runners: intentionally omit --no-reboot
 ./start.sh swe1_14 -fullscreen -bpp 16
@@ -289,7 +291,7 @@ Examples:
 |---|---|---|
 | `--no-reboot` | off | Select the safe testing runner and no-watchdog emulator binary |
 | `--pinbox` | off | Run the Pinbox fork instead of Nucore |
-| `--asix` | off | Add the ASIX `libftchipid` overlay for USB-to-serial cabinet I/O |
+| `--asix` | off | Select the alternate legacy library overlay historically named `asix` |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
@@ -302,6 +304,11 @@ Examples:
 | `--no-inhibit` | off | Do not prevent desktop idle, locking, sleep, or lid actions |
 | `--` | — | Stop parsing launcher options |
 | `-h`, `--help` | — | Print launcher help and exit |
+
+Despite its historical name, `--asix` is only a library-selection switch. The
+overlay contains an alternate `libltdl.so.3` and a `libftd2xx.so` entry; the
+FTD2XX file is byte-for-byte identical to the default bundled copy, while the
+libltdl build differs. It does not activate USB or serial behavior by itself.
 
 Nucore options use a single dash and are passed through unchanged. Common
 examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
@@ -389,8 +396,8 @@ they override the corresponding loaded configuration for that run.
 
 The embedded serial backend contains support strings for `null`, `stdio`,
 `file:PATH`, `pipe:PATH` and device paths under `/dev`. This project does not
-currently depend on `-serial`; prefer `--asix` for the supported ASIX cabinet
-adapter path.
+currently depend on `-serial`. No repository evidence connects it to `--asix`,
+so do not infer a serial-adapter configuration from that historical name.
 
 #### Extra Pinbox options
 
@@ -618,7 +625,7 @@ bundlex86/            i386 shared libraries the bundle ships
   direct/             libs nucore links against directly
   indirect/           transitive deps + ld-linux.so.2
   alsa-lib/           32-bit Pulse ALSA plugin set
-  asix/               ASIX libftchipid overlay (USB-to-serial cabinets)
+  asix/               opt-in alternate libltdl/libftd2xx library overlay
   sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
 update/               *_update.bin (one update at a time — see below)
