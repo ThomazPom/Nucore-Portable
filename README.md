@@ -530,6 +530,13 @@ version currently published by the host's configured Debian repositories. It
 downloads and extracts the i386 package without installing it system-wide,
 keeps the previous file, and updates the overlay symlink:
 
+On a stock 64-bit installation, enable the i386 package index once (this
+changes APT's known architectures but installs no packages):
+
+```sh
+sudo dpkg --add-architecture i386 && sudo apt update
+```
+
 ```sh
 cd Nucore-Portable
 work=$(mktemp -d)
@@ -583,6 +590,55 @@ A new D2XX release can change its required glibc baseline or runtime behavior
 even when its SONAME looks compatible. It also does not update `libftchipid`:
 those are separate libraries and must be evaluated separately. Keep such a
 change local until desktop and real-cabinet tests pass.
+
+#### Useful library one-liners
+
+These are intentionally read-only unless the comment says **changes files**:
+
+```sh
+# Download both Debian SDL candidates without installing them (after enabling
+# the i386 package index as shown above)
+apt download libsdl1.2debian:i386 libsdl2-2.0-0:i386
+
+# Download and immediately list the SDL12-compat package contents
+apt download libsdl1.2debian:i386 && dpkg-deb -c libsdl1.2debian_*_i386.deb | sed -n '/libSDL-1.2.so/p'
+
+# Show the SDL12-compat version offered by the configured Debian suite
+apt-cache policy libsdl1.2debian:i386
+
+# Prove which C++ runtime the original Nucore libftchipid requests
+readelf -d bundlex86/direct/libftchipid.so.0 | sed -n '/NEEDED/p'
+
+# Show the important libraries resolved by the conservative native path
+bundlex86/indirect/ld-linux.so.2 --inhibit-cache --library-path bundlex86/direct:bundlex86/indirect --list bin/nucore_nwd | sed -n '/libSDL\|libftchipid\|libftd2xx\|libstdc++/p'
+
+# Show the same resolution with SDL12-compat placed first
+bundlex86/indirect/ld-linux.so.2 --inhibit-cache --library-path bundlex86/sdl12-compat:bundlex86/direct:bundlex86/indirect --list bin/nucore_nwd | sed -n '/libSDL\|libftchipid\|libftd2xx\|libstdc++/p'
+
+# Check whether two candidate libraries are actually duplicates
+sha256sum bundlex86/asix/libftd2xx.so bundlex86/direct/libftd2xx.so.0
+
+# Inspect architecture, SONAME and dependencies before copying any candidate
+file "$candidate" && readelf -d "$candidate" | sed -n '/SONAME\|NEEDED/p'
+
+# Native/compat desktop A/B test (each command is independent)
+./start.sh --no-reboot swe1_14 -window
+SDL12COMPAT_DEBUG_LOGGING=1 ./start.sh --no-reboot --sdl12-compat swe1_14 -window
+
+# Restore the originally bundled SDL12-compat target (**changes one symlink**)
+ln -sfn libSDL-1.2.so.1.2.68 bundlex86/sdl12-compat/libSDL-1.2.so.0
+
+# See every local library edit or replacement before committing
+git status --short bundlex86 && git diff --stat -- bundlex86
+```
+
+The loader `--list` commands resolve dependencies without starting Nucore, so
+they are the fastest way to verify that an overlay really wins the search path.
+Matching SHA-256 values mean the files are identical regardless of their names.
+Use `apt download` whenever Debian packages the library: unlike `apt install`,
+it only saves the `.deb` in the current directory. The vendor download remains
+necessary for FTDI D2XX because the current proprietary Linux release is not a
+Debian package.
 
 #### Choosing an SDL implementation
 
