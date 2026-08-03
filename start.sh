@@ -164,8 +164,9 @@ case "$1" in
         exit 2 ;;
 esac
 
-ARGS=("$@")
-[ ${#ARGS[@]} -eq 0 ] && ARGS=(-fullscreen -bpp 16)
+# Baseline presentation comes first; user arguments are cumulative and parsed
+# later by Nucore, so -window and -bpp 32 override their respective defaults.
+ARGS=(-fullscreen -bpp 16 -nowatermark "$@")
 
 echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  args=${ARGS[*]}"
 

@@ -120,7 +120,8 @@ Examples:
 
 Nucore options use a single dash and are passed through unchanged. Common
 examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
-`-nojukeplay`.
+`-nojukeplay`. Every launch starts with the cumulative baseline
+`-fullscreen -bpp 16 -nowatermark`; supplied options are appended afterward.
 
 ### Games
 
@@ -218,9 +219,12 @@ usable feature.
 ./start.sh --no-reboot swe1_14 -fullscreen -bpp 16 -parallel 0x378
 ```
 
-When you provide any Nucore option, spell out `-window` or `-fullscreen` and
-the desired `-bpp` explicitly. The launcher's automatic
-`-fullscreen -bpp 16` pair is added only when no Nucore options were supplied.
+Launcher defaults and Nucore arguments are cumulative. The launcher always
+places `-fullscreen -bpp 16 -nowatermark` first, followed by everything you
+supplied. Because Nucore processes the arguments in order, later alternatives
+override earlier ones: `-window` overrides implicit `-fullscreen`, and
+`-bpp 32` overrides implicit `-bpp 16`. Independent switches such as
+`-nojukeplay`, `-flipscreen` and `-nopause` simply join the baseline.
 
 #### Low-level positional forms and legacy entries
 
