@@ -171,7 +171,7 @@ with that name did not predate the installer.
 ## Real cabinet I/O
 
 * **LPT (parallel port)**: `./start.sh swe1_14 -parallel 0x378`
-* **Alternate legacy libraries**: `./start.sh --asix swe1_14`
+* **Experimental modern-C++ runtime path**: `./start.sh --asix --no-reboot swe1_14`
 
 ### Nucore function keys
 
@@ -268,7 +268,7 @@ Examples:
 # Cabinet I/O
 ./start.sh --no-reboot swe1_14 -parallel 0x378
 
-# Optional alternate library set (historically named "asix")
+# Experimental ASIX libftchipid using libstdc++.so.6
 ./start.sh --asix --no-reboot swe1_14
 
 # Production cabinet runners: intentionally omit --no-reboot
@@ -291,7 +291,7 @@ Examples:
 |---|---|---|
 | `--no-reboot` | off | Select the safe testing runner and no-watchdog emulator binary |
 | `--pinbox` | off | Run the Pinbox fork instead of Nucore |
-| `--asix` | off | Select the alternate legacy library overlay historically named `asix` |
+| `--asix` | off | **Experimental:** select the newer ASIX `libftchipid` path that uses `libstdc++.so.6` instead of the original `.so.5` |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
@@ -305,10 +305,21 @@ Examples:
 | `--` | — | Stop parsing launcher options |
 | `-h`, `--help` | — | Print launcher help and exit |
 
-Despite its historical name, `--asix` is only a library-selection switch. The
-overlay contains an alternate `libltdl.so.3` and a `libftd2xx.so` entry; the
-FTD2XX file is byte-for-byte identical to the default bundled copy, while the
-libltdl build differs. It does not activate USB or serial behavior by itself.
+`--asix` comes from an earlier, successful but unproven compatibility
+experiment. Nucore's original `libftchipid.so.0` depends on
+`libstdc++.so.5`, which recent Debian releases no longer provide. The newer
+`libftchipid` 0.1.0 binary downloaded from ASIX's official site instead uses
+the readily available `libstdc++.so.6`. Its ABI packaging differs from the
+Nucore build: it names `libftchipid.so` and `libftd2xx.so` rather than their
+`.so.0` forms, so the experiment also required aliases and an alternate
+`libltdl.so.3`. That is why it remains explicit rather than replacing the
+known Nucore libraries by default.
+
+The current `bundlex86/asix/` directory retains the alternate `libltdl` and
+FTD2XX alias, but the ASIX `libftchipid` binary itself was accidentally omitted
+when the portable repository was assembled. Consequently, the present
+`--asix` switch does **not yet recreate the original experiment**; it must not
+be presented as a tested cabinet or USB mode until that binary is restored.
 
 Nucore options use a single dash and are passed through unchanged. Common
 examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
@@ -625,7 +636,7 @@ bundlex86/            i386 shared libraries the bundle ships
   direct/             libs nucore links against directly
   indirect/           transitive deps + ld-linux.so.2
   alsa-lib/           32-bit Pulse ALSA plugin set
-  asix/               opt-in alternate libltdl/libftd2xx library overlay
+  asix/               incomplete ASIX libftchipid 0.1.0 experiment overlay
   sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
 update/               *_update.bin (one update at a time — see below)

@@ -20,9 +20,9 @@
 #                     --no-reboot             runrd      + nucore_nwd
 #                     --pinbox                run        + pinbox
 #                     --pinbox --no-reboot    run_pb_rd  + pinbox_nwd
-#   --asix        opt into the alternate legacy library overlay named "asix".
-#                 It selects an alternate libltdl build (plus a matching
-#                 libftd2xx entry); it does not enable a separate USB mode.
+#   --asix        EXPERIMENTAL: select the newer ASIX libftchipid 0.1.0 path.
+#                 It was tested because it uses libstdc++.so.6, available on
+#                 modern Debian, instead of Nucore's original libstdc++.so.5.
 #   --sdl12-compat
 #                 EXPERIMENTAL: translate the SDL 1.2 ABI to bundled SDL 2.
 #                 The proven native SDL 1.2 path remains the default.
@@ -51,7 +51,7 @@
 #   ./start.sh --no-reboot rfm_15              # safe testing: runrd + nucore_nwd + rfm_15
 #   ./start.sh --pinbox swe1_14                # production pinbox fork on swe1_14
 #   ./start.sh --pinbox --no-reboot rfm_15     # safe testing of pinbox on rfm_15
-#   ./start.sh --asix swe1_14                  # production with alternate legacy libs
+#   ./start.sh --asix --no-reboot swe1_14      # experimental ASIX libftchipid path
 #
 # Privilege escalation:
 #   nucore needs CAP_SYS_RAWIO (parallel-port ioperm) and CAP_SYS_NICE
