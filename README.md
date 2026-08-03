@@ -112,6 +112,35 @@ below for the full picture.
 `--asix` is orthogonal to the four modes above: it overlays the ASIX
 `libftchipid` for USB-to-serial cabinet adapters.
 
+### Experimental SDL 2 compatibility path
+
+This experimental branch adds an opt-in SDL modernization test:
+
+```sh
+./start.sh --no-reboot --sdl12-compat swe1_14 -window -bpp 16
+```
+
+`--sdl12-compat` puts Debian 13's 32-bit `sdl12-compat` 1.2.68 library ahead
+of the native SDL 1.2 library. Nucore still sees the `libSDL-1.2.so.0` ABI,
+while `sdl12-compat` translates it to the already-bundled SDL 2 runtime. This
+is deliberately **experimental and opt-in**: native SDL 1.2 remains the
+default for production cabinets until video, keyboard, audio, fullscreen,
+timing, and cabinet I/O have all been exercised on real hardware.
+
+Set `SDL12COMPAT_DEBUG_LOGGING=1` to confirm which SDL implementation loaded:
+
+```sh
+SDL12COMPAT_DEBUG_LOGGING=1 ./start.sh --no-reboot --sdl12-compat swe1_14 -window
+```
+
+Expected confirmation:
+
+```text
+INFO: sdl12-compat 1.2.68, ... talking to SDL2 2.26.5
+```
+
+The option composes with `--asix`; no files are installed system-wide.
+
 ## Production install (autostart in your graphical session)
 
 ```sh
@@ -354,13 +383,15 @@ for why `--preload` and not `LD_PRELOAD=`).
 
 ## How the launcher works (one paragraph)
 
-`start.sh` parses `--no-reboot` / `--pinbox` / `--asix` to pick a
+`start.sh` parses `--no-reboot` / `--pinbox` / `--asix` /
+`--sdl12-compat` to pick a
 `(runner, binary)` pair, then calls
 `bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. The runner
 binary `execv()`s back into `bundled.sh`; the second entry is detected via the
 `_BUNDLED_BINARY` env var and finally exec's the real emulator through the
-bundled `ld-linux.so.2 --preload sigio_fix.so --library-path
-bundlex86/direct:bundlex86/indirect`. Passing `--preload` to `ld-linux`
+bundled `ld-linux.so.2 --preload sigio_fix.so`. Its library path is an
+optional overlay followed by `bundlex86/direct:bundlex86/indirect`. Passing
+`--preload` to `ld-linux`
 directly (instead of `LD_PRELOAD=`) is what makes the preload survive the
 runner→exec wrap — the env-var version was getting silently dropped, which
 was the original "no sound on x64" symptom.

@@ -4,12 +4,14 @@
 # Wraps the target binary in a self-contained i386 runtime (../bundlex86)
 # so the host needs no `dpkg --add-architecture i386` or system 32-bit libs.
 #
-# Usage: bundled.sh [portable|asix] <runner> <binary> [args...]
-#   portable  — bundled ld-linux + sigio_fix preload         (default)
-#   asix      — portable + ASIX libftchipid overlay (USB-to-serial cabinets)
+# Usage: bundled.sh [mode] <runner> <binary> [args...]
+#   portable          — native SDL 1.2 + sigio_fix (default)
+#   asix              — portable + ASIX libftchipid overlay
+#   sdl12-compat      — experimental SDL 1.2 ABI on bundled SDL 2
+#   sdl12-compat-asix — sdl12-compat + ASIX overlay
 #
-# This script is normally invoked by ../start.sh; you only need to call it
-# directly for ASIX mode or to bypass the start.sh argument parser.
+# This script is normally invoked by ../start.sh. Call it directly only for
+# launcher development or to bypass start.sh's argument parser.
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
 BUNDLE=$(CDPATH= cd -- "$SCRIPT_DIR/../bundlex86" && pwd) || {
@@ -18,15 +20,21 @@ BUNDLE=$(CDPATH= cd -- "$SCRIPT_DIR/../bundlex86" && pwd) || {
 }
 PRELOAD="$SCRIPT_DIR/sigio_fix.so"
 
+set_library_path() {
+    case "$1" in
+        asix)              LIBPATH="$BUNDLE/asix:$BUNDLE/direct:$BUNDLE/indirect" ;;
+        sdl12-compat)      LIBPATH="$BUNDLE/sdl12-compat:$BUNDLE/direct:$BUNDLE/indirect" ;;
+        sdl12-compat-asix) LIBPATH="$BUNDLE/sdl12-compat:$BUNDLE/asix:$BUNDLE/direct:$BUNDLE/indirect" ;;
+        *)                 LIBPATH="$BUNDLE/direct:$BUNDLE/indirect" ;;
+    esac
+}
+
 # ── Wrap mode ──────────────────────────────────────────────────────────────────
 # The runner binary (run / runrd / run_pb_rd) called execv() back into this
 # script; re-exec the real emulator through the bundled ld-linux, re-applying
 # --preload as a flag (env LD_PRELOAD is dropped across the runner→exec wrap).
 if [ -n "$_BUNDLED_BINARY" ]; then
-    case "$_BUNDLED_MODE" in
-        asix) LIBPATH="$BUNDLE/asix:$BUNDLE/direct:$BUNDLE/indirect" ;;
-        *)    LIBPATH="$BUNDLE/direct:$BUNDLE/indirect" ;;
-    esac
+    set_library_path "$_BUNDLED_MODE"
     exec "$BUNDLE/indirect/ld-linux.so.2" \
         --inhibit-cache \
         --preload "$PRELOAD" \
@@ -36,7 +44,7 @@ fi
 
 # ── Normal invocation ──────────────────────────────────────────────────────────
 case "$1" in
-    portable|asix) MODE="$1"; shift ;;
+    portable|asix|sdl12-compat|sdl12-compat-asix) MODE="$1"; shift ;;
     *)             MODE=portable ;;
 esac
 
@@ -45,9 +53,11 @@ BINARY="$1"; [ "$#" -gt 0 ] && shift
 
 if [ -z "$RUNNER" ] || [ -z "$BINARY" ]; then
     cat >&2 <<EOF
-Usage: $0 [portable|asix] <runner> <binary> [args...]
-  portable  — bundled ld-linux + sigio_fix (default)
-  asix      — portable + ASIX libftchipid overlay
+Usage: $0 [mode] <runner> <binary> [args...]
+  portable          — native SDL 1.2 + sigio_fix (default)
+  asix              — portable + ASIX libftchipid overlay
+  sdl12-compat      — experimental SDL 1.2 ABI on SDL 2
+  sdl12-compat-asix — sdl12-compat + ASIX overlay
 EOF
     exit 1
 fi
@@ -63,10 +73,7 @@ export AUDIODEV="${AUDIODEV:-sysdefault}"
 # (for example /usr/lib/i386-linux-gnu/alsa-lib), defeating portability.
 export ALSA_PLUGIN_DIR="$BUNDLE/alsa-lib"
 
-case "$MODE" in
-    asix) LIBPATH="$BUNDLE/asix:$BUNDLE/direct:$BUNDLE/indirect" ;;
-    *)    LIBPATH="$BUNDLE/direct:$BUNDLE/indirect" ;;
-esac
+set_library_path "$MODE"
 
 export _BUNDLED_MODE="$MODE"
 export _BUNDLED_BINARY="$BINARY"
