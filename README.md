@@ -168,10 +168,10 @@ never installed any packages, there is nothing else to restore. It deliberately
 retains the `.nucore-bak` safety copies because it cannot prove that a backup
 with that name did not predate the installer.
 
-## Real cabinet I/O
+## Cabinet I/O and compatibility experiments
 
 * **LPT (parallel port)**: `./start.sh swe1_14 -parallel 0x378`
-* **Experimental modern-C++ runtime path**: `./start.sh --asix --no-reboot swe1_14`
+* **ASIX `.so.6` compatibility experiment**: `./start.sh --asix --no-reboot swe1_14`
 
 ### Nucore function keys
 
@@ -498,6 +498,23 @@ as historical binaries and are not selected by `start.sh`.
 
 The SDL implementation and the two shim halves are independent:
 
+### Optional modern compatibility paths
+
+The launcher's design preserves several opt-in alternatives alongside its
+conservative defaults: the ASIX `libftchipid` experiment for the move from
+`libstdc++.so.5` to `.so.6` (currently incomplete, as documented above),
+SDL12-compat for running the SDL 1.2 ABI over SDL 2, and controls for testing
+each half of the preload shim. Such alternatives remain useful even when the
+original stack works: they provide escape routes for distributions that stop
+carrying an old dependency and controlled A/B tests when diagnosing a cabinet.
+
+They are alternatives, not cumulative upgrades. Selecting more of them does
+not inherently make Nucore faster, more accurate, more stable or better
+sounding. Each substitutes one compatibility boundary and therefore exchanges
+an old, known behavior for a newer but less cabinet-tested one. Use the smallest
+change that solves an observed problem; the native SDL 1.2 path with the full
+shim remains the default.
+
 #### Choosing an SDL implementation
 
 Neither SDL choice is universally "better"; they optimize for different
@@ -507,9 +524,9 @@ risks.
 |---|---|---|
 | What runs | The original SDL 1.2 implementation Nucore was built and tested against | Nucore's unchanged SDL 1.2 calls translated at runtime to bundled SDL 2 |
 | Main advantage | Fewest behavioral changes: original timing, surfaces, input and fullscreen semantics | A maintained compatibility bridge to a newer video, audio and input implementation |
-| Modern-host potential | Predictable legacy behavior, but dependent on old SDL assumptions | Better fit for current display servers, audio stacks, controllers and SDL2 driver fixes without modifying Nucore |
+| Modern-host potential | Predictable legacy behavior, but dependent on old SDL assumptions | May fit current display servers, audio stacks and input drivers better without modifying Nucore |
 | Main risk | SDL 1.2 is obsolete and increasingly awkward on new desktops | Translation can subtly change timing, fullscreen, rendering, focus or input behavior |
-| Project status | Production default and the conservative cabinet choice | Experimental, promising, and easy to test side by side |
+| Project status | Production default and the conservative cabinet choice | Experimental alternative that is easy to test side by side; no blanket improvement claimed |
 
 SDL12-compat is not a port of Nucore to SDL 2: the game still calls the SDL
 1.2 API it knows. The compatibility library implements that ABI using SDL 2
@@ -518,7 +535,7 @@ emulator, but it cannot guarantee that every old edge case behaves identically.
 Native SDL 1.2 therefore remains valuable even if SDL12-compat works perfectly
 on a particular desktop.
 
-In practical terms, SDL12-compat can benefit from SDL2's maintained driver
+In practical terms, SDL12-compat may benefit from SDL2's maintained driver
 code, current X11/Wayland integration, newer audio-device handling and input
 hotplug support. It also reduces dependence on an SDL 1.2 library that modern
 distributions are gradually dropping. The bundle's audio route still starts
@@ -562,7 +579,9 @@ INFO: sdl12-compat 1.2.68, ... SDL2 2.26.5     # SDL 2 path is active
 `--sdl12-compat`, the shim controls, and `--asix` compose with each other. No
 option installs or replaces host libraries. Native SDL 1.2 and the shim remain
 the production defaults because desktop success does not validate real cabinet
-RTC/SIGIO interrupts, fullscreen timing, or cabinet input/output.
+RTC/SIGIO interrupts, fullscreen timing, or cabinet input/output. Composition
+means the switches can be tested together; it does not imply that stacking
+them provides an additional benefit.
 
 ### Audio selection
 
