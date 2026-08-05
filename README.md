@@ -234,26 +234,40 @@ games alive stays supported.
 | RFM  | v2.50             | `pin2000_50070_0250_*`           |
 | RFM  | v2.60             | `pin2000_50070_0260_*`           |
 
-nucore only loads **one** update at a time, and the `*_update.bin`
-file must sit at the **root** of `update/`. To install a community
-bundle:
+Nucore selects the update tree for the running game. It expects these
+exact paths:
 
-1. Wipe the `update/` folder so no stale firmware files are left
-   behind. Mixing files from two different firmware versions is the
-   most common cause of boot failures.
+```text
+update/swe1_14/swe1_14_update.bin
+update/rfm_15/rfm_15_update.bin
+```
+
+The SWE1 and RFM trees can coexist. Only one firmware payload belongs
+inside each game directory, however: do not mix files from two versions
+of the same game. To install a community bundle:
+
+1. Remove and recreate **only the target game's directory**. For SWE1:
    ```sh
-   rm -rf update/*
+   rm -rf -- update/swe1_14
+   mkdir -- update/swe1_14
    ```
-2. Open the community archive, browse into whatever subfolder
-   contains the `*_update.bin` plus the `pin2000_*` files /
-   `gamelist.txt`, and extract those files **directly into** the
-   now-empty `update/` folder — flat, no nested per-game directory.
-3. Launch as usual. The game version printed on the boot screen
-   should now reflect the community firmware.
+   For RFM, use `update/rfm_15` instead.
+2. Open the community archive and find the directory containing the
+   matching `*_update.bin`, `gamelist.txt`, and `pin2000_*` files.
+   Extract those files directly into `update/swe1_14/` or
+   `update/rfm_15/` — flat inside that game directory, with no extra
+   archive directory around them.
+3. Check that the payload has the exact name Nucore expects
+   (`swe1_14_update.bin` or `rfm_15_update.bin`), then launch normally.
+   The boot screen should report the community firmware version.
 
-To return to the official Williams firmware, repeat with the original
-payload (a fresh `git checkout -- update/` from a clean clone is the
-easiest way).
+To restore the official Williams payload for one game, replace only
+that directory from Git. For example, for SWE1:
+
+```sh
+rm -rf -- update/swe1_14
+git restore --source=HEAD -- update/swe1_14
+```
 
 > **About the `.exe` files on mypinballs.com.** Despite the
 > extension, the distributed bundles are plain archives — the `.exe`
@@ -872,7 +886,7 @@ bundlex86/            i386 shared libraries the bundle ships
   asix/               complete ASIX libftchipid 0.1.0 / libstdc++.so.6 overlay
   sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
-update/               *_update.bin (one update at a time — see below)
+update/               per-game update trees; both may coexist
   swe1_14/            SWE1 update tree (latest official Williams: 0150)
   rfm_15/             RFM  update tree (latest official Williams: 0180)
                       Newer post-Williams firmware (Jim Askey at
