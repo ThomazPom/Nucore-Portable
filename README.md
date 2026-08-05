@@ -305,7 +305,7 @@ Examples:
 | `--` | — | Stop parsing launcher options |
 | `-h`, `--help` | — | Print launcher help and exit |
 
-`--asix` comes from an earlier, successful but unproven compatibility
+`--asix` comes from an earlier, successful but still experimental compatibility
 experiment. Nucore's original `libftchipid.so.0` depends on
 `libstdc++.so.5`, which recent Debian releases no longer provide. The newer
 `libftchipid` 0.1.0 binary downloaded from ASIX's official site instead uses
@@ -315,11 +315,17 @@ Nucore build: it names `libftchipid.so` and `libftd2xx.so` rather than their
 `libltdl.so.3`. That is why it remains explicit rather than replacing the
 known Nucore libraries by default.
 
-The current `bundlex86/asix/` directory retains the alternate `libltdl` and
-FTD2XX alias, but the ASIX `libftchipid` binary itself was accidentally omitted
-when the portable repository was assembled. Consequently, the present
-`--asix` switch does **not yet recreate the original experiment**; it must not
-be presented as a tested cabinet or USB mode until that binary is restored.
+The complete i386 ASIX set is bundled in `bundlex86/asix/`. Therefore these are
+real A/B paths, not aliases for the same configuration:
+
+```sh
+./start.sh --no-reboot swe1_14 -window        # original libftchipid → libstdc++.so.5
+./start.sh --asix --no-reboot swe1_14 -window # ASIX 0.1.0       → libstdc++.so.6
+```
+
+Both paths have reached game, video and audio initialization in controlled
+desktop runs. The original `.so.5` path remains the default because those runs
+do not replace long-duration or real-cabinet validation of the ASIX variant.
 
 Nucore options use a single dash and are passed through unchanged. Common
 examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
@@ -502,7 +508,7 @@ The SDL implementation and the two shim halves are independent:
 
 The launcher's design preserves several opt-in alternatives alongside its
 conservative defaults: the ASIX `libftchipid` experiment for the move from
-`libstdc++.so.5` to `.so.6` (currently incomplete, as documented above),
+`libstdc++.so.5` to `.so.6`,
 SDL12-compat for running the SDL 1.2 ABI over SDL 2, and controls for testing
 each half of the preload shim. Such alternatives remain useful even when the
 original stack works: they provide escape routes for distributions that stop
@@ -780,7 +786,7 @@ bundlex86/            i386 shared libraries the bundle ships
   direct/             libs nucore links against directly
   indirect/           transitive deps + ld-linux.so.2
   alsa-lib/           32-bit Pulse ALSA plugin set
-  asix/               incomplete ASIX libftchipid 0.1.0 experiment overlay
+  asix/               complete ASIX libftchipid 0.1.0 / libstdc++.so.6 overlay
   sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
 update/               *_update.bin (one update at a time — see below)
@@ -986,6 +992,9 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
   plugins used to avoid host multiarch dependencies
 * `bundlex86/sdl12-compat/` — Debian 13 i386 `sdl12-compat` 1.2.68-3;
   checksum and full redistribution notices are included beside the binary
+* `bundlex86/asix/libftchipid.so.0` — official ASIX i386 `libftchipid` 0.1.0;
+  source URL, naming details and SHA-256 checksums are recorded in the adjacent
+  `README.md`
 * `roms/`, `update/` — extracted from `FlipperFiles/Roms/Nucore/nucore-roms.tar.gz.*`
 * `resources/`, `config/`, `install/` — from the same upstream nucore deb
 ```
