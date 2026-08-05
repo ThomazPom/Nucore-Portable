@@ -168,6 +168,12 @@ cause is configuration load order, an option-parser defect, or another later
 assignment. That narrower claim would require clean comparative breakpoints or
 disassembly of the relevant write.
 
+Nucore-Portable therefore implements a boundary-layer workaround: an explicit
+`-window` or `-fullscreen` updates only `FULL_SCREEN` in `pb2k.cfg` before the
+binary starts. With no explicit video-mode argument, the launcher leaves the
+file untouched. This does not patch or pretend to repair Nucore's internals;
+it makes the existing configuration interface deterministic.
+
 ## Keep experiments honest
 
 - Change one input at a time and record the complete command line.
