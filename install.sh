@@ -80,39 +80,11 @@ case "$GAME_IN" in
     *)                   DEFAULT_GAME=swe1_14 ;;
 esac
 
-CUSTOM_CONFIG=""
-read -r -p "Custom Nucore .cfg file (blank: launcher defaults): " CONFIG_IN
-if [ -n "$CONFIG_IN" ]; then
-    case "$CONFIG_IN" in
-        /*) CUSTOM_CONFIG="$CONFIG_IN" ;;
-        *)  CUSTOM_CONFIG="$SCRIPT_DIR/$CONFIG_IN" ;;
-    esac
-    CUSTOM_CONFIG=$(readlink -f -- "$CUSTOM_CONFIG") || {
-        echo "install.sh: config file does not exist" >&2
-        exit 2
-    }
-    [ -f "$CUSTOM_CONFIG" ] || {
-        echo "install.sh: config is not a regular file: $CUSTOM_CONFIG" >&2
-        exit 2
-    }
-    case "$CUSTOM_CONFIG" in
-        *.cfg) ;;
-        *) echo "install.sh: config file must end in .cfg: $CUSTOM_CONFIG" >&2; exit 2 ;;
-    esac
-    case "$CUSTOM_CONFIG" in
-        *[!A-Za-z0-9_./-]*)
-            echo "install.sh: installed config path contains unsupported characters: $CUSTOM_CONFIG" >&2
-            exit 2 ;;
-    esac
-fi
-
 USE_PINBOX=0
 ask "Boot the pinbox fork instead of nucore?" N && USE_PINBOX=1
 
 EXTRA_FLAGS=""
 [ $USE_PINBOX -eq 1 ] && EXTRA_FLAGS="--pinbox"
-CONFIG_FLAG=""
-[ -n "$CUSTOM_CONFIG" ] && CONFIG_FLAG="--config=$CUSTOM_CONFIG"
 
 DO_AUTOSTART=1
 ask "Auto-launch on graphical login (recommended)?" Y || DO_AUTOSTART=0
@@ -151,7 +123,6 @@ echo
 echo "About to apply:"
 echo "  default game        : $DEFAULT_GAME"
 echo "  emulator            : $([ $USE_PINBOX -eq 1 ] && echo pinbox || echo nucore)"
-echo "  config              : ${CUSTOM_CONFIG:-launcher defaults}"
 echo "  autostart on login  : $DO_AUTOSTART"
 echo "  display-manager autologin : $([ $DO_AUTOLOGIN -eq 1 ] && echo "yes ($AUTOLOGIN_USER)" || echo no)"
 echo "  install path        : $SCRIPT_DIR (run from where it lives — no copy)"
@@ -186,7 +157,7 @@ Type=simple
 WorkingDirectory=$SCRIPT_DIR
 # No User= line: runs as root, gets CAP_SYS_RAWIO + CAP_SYS_NICE for free.
 # That is exactly what nucore needs for parallel-port ioperm and RT audio.
-ExecStart=$WRAPPER $EXTRA_FLAGS $CONFIG_FLAG $DEFAULT_GAME
+ExecStart=$WRAPPER $EXTRA_FLAGS $DEFAULT_GAME
 # F1 / Esc → nucore exits cleanly → we DO NOT bounce back. User explicitly
 # asked for the desktop, so go to the desktop. To relaunch from a desktop
 # terminal: systemctl start nucore (no auth needed for owner of the unit

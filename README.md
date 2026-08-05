@@ -105,7 +105,6 @@ re-run `./install.sh` if you switch to a GNOME desktop later.
 You'll be asked, one by one:
 
 * default game on boot (`swe1_14` / `rfm_15` / `auto`)
-* optional custom `.cfg` file (blank keeps the launcher defaults)
 * boot the pinbox fork instead of nucore (default no)
 * auto-launch on graphical login (default yes)
 * enable display-manager autologin (default yes), and which user
@@ -296,7 +295,6 @@ Examples:
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
 | `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
-| `--config FILE` | none | Load a custom Nucore `.cfg`; the file replaces implicit presentation defaults |
 | `--root=run0` | auto | Force systemd `run0` privilege escalation |
 | `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
 | `--root=sudo` | auto | Force classic `sudo` privilege escalation |
@@ -329,8 +327,7 @@ do not replace long-duration or real-cabinet validation of the ASIX variant.
 
 Nucore options use a single dash and are passed through unchanged. Common
 examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
-`-nojukeplay`. Every launch starts with the cumulative baseline
-`-fullscreen -bpp 16 -nowatermark`; supplied options are appended afterward.
+`-nojukeplay`. The launcher adds no implicit Nucore options.
 
 ### Games
 
@@ -340,37 +337,33 @@ examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
 | `rfm_15` or `rfm` | Revenge From Mars — Revision 1.5 |
 | `auto` | Ask Nucore to detect the game |
 
-### Use a config file instead of repeating arguments
+### Nucore's own configuration file
 
-Nucore can load a complete configuration before the game starts. Copy the
-shipped template, edit it once, and select it through the launcher:
-
-```sh
-cp config/pb2k.cfg config/cabinet.cfg
-nano config/cabinet.cfg
-./start.sh --no-reboot --config config/cabinet.cfg swe1_14
-```
-
-The file covers RGB gamma, fullscreen, screen
-inversion, renderer depth, watermark, jukebox and playlist behavior, USB,
-tournament/server settings, server ports and tick adjustment. It remains an
-ordinary text file in the repository; the launcher does not rewrite it. The
-positional game remains authoritative: omit it for the default `swe1_14`, or
-name `rfm_15` / `auto` as usual.
-
-Selecting `--config` suppresses the launcher's implicit
-`-fullscreen -bpp 16 -nowatermark` baseline, so the file genuinely owns those
-settings. Nucore arguments are still cumulative and optional. If present, they
-come after the config and override it for that run:
+Nucore automatically reads the fixed file `config/pb2k.cfg` when it starts.
+Edit that file directly for persistent Nucore settings:
 
 ```sh
-./start.sh --no-reboot --config config/cabinet.cfg swe1_14 -window
+nano config/pb2k.cfg
+./start.sh --no-reboot swe1_14
 ```
 
-`install.sh` asks for the same optional `.cfg` path and records it in
-`nucore.service`, allowing an installed cabinet to boot entirely from the file
-without a repeated argument list. Keep that file in place while the service is
-installed.
+It controls Nucore values such as gamma, fullscreen, screen inversion, renderer
+depth, watermark, jukebox/playlist behavior, USB, tournament/server settings,
+server ports and tick adjustment. Nucore-Portable does not parse or rewrite
+this file, and it has no separate `.cfg` format. Portable-specific choices such
+as `--no-reboot`, `--asix`, `--sdl12-compat` and shim selection remain launcher
+options.
+
+Explicit Nucore arguments are parsed after `pb2k.cfg`, so they override its
+corresponding value for one run without changing the file:
+
+```sh
+./start.sh --no-reboot swe1_14 -window
+```
+
+The shipped `pb2k.cfg` already supplies the normal fullscreen, 16-bpp and
+no-watermark defaults. The launcher therefore adds no hidden presentation
+arguments.
 
 ### Nucore command-line reference recovered from the binary
 
@@ -465,12 +458,11 @@ usable feature.
 ./start.sh --no-reboot swe1_14 -fullscreen -bpp 16 -parallel 0x378
 ```
 
-Launcher defaults and Nucore arguments are cumulative. The launcher always
-places `-fullscreen -bpp 16 -nowatermark` first, followed by everything you
-supplied. Because Nucore processes the arguments in order, later alternatives
-override earlier ones: `-window` overrides implicit `-fullscreen`, and
-`-bpp 32` overrides implicit `-bpp 16`. Independent switches such as
-`-nojukeplay`, `-flipscreen` and `-nopause` simply join the baseline.
+Nucore loads `pb2k.cfg` first and then processes explicit command-line options.
+Thus `-window` can temporarily override `FULL_SCREEN=1`, and `-bpp 32` can
+temporarily override `BPP_ADJ=16`. Independent switches such as `-nojukeplay`,
+`-flipscreen` and `-nopause` apply only to that invocation. Nucore-Portable
+passes them through in their original order and does not manufacture defaults.
 
 #### Low-level positional forms and legacy entries
 
@@ -478,9 +470,11 @@ The binary itself accepts `?`, `-h` or `--h` as its first argument to print
 its small embedded help screen. `start.sh` handles `-h` and `--help` as
 launcher help instead.
 
-The binary accepts a path ending in `.cfg` before the game name and prints
-`Using config file: ...`; `start.sh --config FILE` exposes this form safely and
-resolves relative paths from the repository root.
+The binary also has a separate positional `.cfg` mechanism that prints
+`Using config file: ...`, but it does **not** parse `pb2k.cfg` settings there.
+Passing `pb2k.cfg` through that mechanism makes each `KEY=value` line get
+treated like a game-name input. Nucore-Portable deliberately does not expose
+this unrelated and undocumented mechanism as a launcher option.
 
 Four additional names exist in the parser table: `-net ARG`, `-s`, `-p ARG`
 and `-d ARG`. Disassembly confirms that this Nucore parser recognizes and
@@ -906,11 +900,11 @@ for why `--preload` and not `LD_PRELOAD=`).
 
 ## How the launcher works (one paragraph)
 
-`start.sh` parses its runner, SDL, shim, privilege and inhibitor options, plus
-an optional `--config FILE`, then picks a `(runner, binary)` pair and calls
-`bin/bundled.sh <mode> bin/<runner> bin/<binary> [config.cfg] <game> <args>`.
-The config is placed where Nucore expects it, before the game, while explicit
-arguments remain last so they can override config values. The runner
+`start.sh` parses its runner, SDL, shim, privilege and inhibitor options, then
+picks a `(runner, binary)` pair and calls
+`bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. Nucore reads
+its own fixed `../config/pb2k.cfg`; explicit arguments remain last so they can
+override its values. The runner
 binary `execv()`s back into `bundled.sh`; the second entry is detected via the
 `_BUNDLED_BINARY` env var and finally exec's the real emulator through the
 bundled `ld-linux.so.2 --preload sigio_fix.so`. Its library path is an

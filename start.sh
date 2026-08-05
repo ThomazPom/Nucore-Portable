@@ -3,7 +3,6 @@
 #
 # Usage: ./start.sh [--no-reboot] [--pinbox] [--asix] [--sdl12-compat]
 #                   [--no-shim] [--no-audio-shim] [--no-sigio-shim]
-#                   [--config FILE]
 #                   [--] [game] [extra args...]
 #
 # Production targets (default):
@@ -34,9 +33,6 @@
 #   --no-sigio-shim
 #                 keep audio interventions but disable RTC/SIGIO protection.
 #                 Diagnostic only: this may restore the legacy boot/crash bug.
-#   --config FILE use a custom Nucore .cfg file. Its presentation settings
-#                 replace the launcher's implicit fullscreen/BPP/watermark
-#                 baseline; later Nucore arguments still override the file.
 #
 # game = swe1_14 (default) | rfm_15 | auto
 #   swe1_14   Star Wars Episode 1 - Revision 1.4
@@ -92,7 +88,6 @@ SDL12_COMPAT=0
 USE_SHIM=1
 SHIM_AUDIO=1
 SHIM_SIGIO=1
-CONFIG_FILE=""
 ROOT_PREF=auto
 USE_INHIBIT=1
 
@@ -105,11 +100,6 @@ while [ $# -gt 0 ]; do
         --no-shim)     USE_SHIM=0;    shift ;;
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
         --no-sigio-shim) SHIM_SIGIO=0; shift ;;
-        --config)
-            [ "$#" -ge 2 ] || { echo "start.sh: --config requires a file" >&2; exit 2; }
-            CONFIG_FILE="$2"; shift 2 ;;
-        --config=)     echo "start.sh: --config requires a file" >&2; exit 2 ;;
-        --config=*)    CONFIG_FILE="${1#--config=}"; shift ;;
         --no-root)     ROOT_PREF=none; shift ;;
         --root)        ROOT_PREF="$2"; shift 2 ;;
         --root=*)      ROOT_PREF="${1#--root=}"; shift ;;
@@ -122,25 +112,6 @@ while [ $# -gt 0 ]; do
         *)             break ;;
     esac
 done
-
-if [ -n "$CONFIG_FILE" ]; then
-    case "$CONFIG_FILE" in
-        /*) ;;
-        *) CONFIG_FILE="$SCRIPT_DIR/$CONFIG_FILE" ;;
-    esac
-    CONFIG_FILE=$(readlink -f -- "$CONFIG_FILE") || {
-        echo "start.sh: config file does not exist" >&2
-        exit 2
-    }
-    [ -f "$CONFIG_FILE" ] || {
-        echo "start.sh: config is not a regular file: $CONFIG_FILE" >&2
-        exit 2
-    }
-    case "$CONFIG_FILE" in
-        *.cfg) ;;
-        *) echo "start.sh: config file must end in .cfg: $CONFIG_FILE" >&2; exit 2 ;;
-    esac
-fi
 
 # These overlays are orthogonal. Native SDL 1.2 remains the default and the
 # compatibility library is selected only when explicitly requested.
@@ -195,17 +166,12 @@ case "$1" in
         exit 2 ;;
 esac
 
-# A custom config owns presentation defaults. Without one, use the friendly
-# baseline. In both cases explicit user arguments come last and therefore win.
-if [ -n "$CONFIG_FILE" ]; then
-    CONFIG_ARGS=("$CONFIG_FILE")
-    ARGS=("$@")
-else
-    CONFIG_ARGS=()
-    ARGS=(-fullscreen -bpp 16 -nowatermark "$@")
-fi
+# Nucore automatically reads ../config/pb2k.cfg from its bin/ working
+# directory. Pass only explicit user arguments here; they are parsed after
+# that file and can override it for one run.
+ARGS=("$@")
 
-echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  config=${CONFIG_FILE:-default}  args=${ARGS[*]}"
+echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  args=${ARGS[*]}"
 
 # ── escalate via sudo (single, simple path) ─────────────────────────────────
 # Already root? Or already have CAP_SYS_RAWIO in our effective set
@@ -231,7 +197,7 @@ BUNDLE_OPTIONS=()
 CMD=("$SCRIPT_DIR/bin/bundled.sh" "${BUNDLE_OPTIONS[@]}" "$MODE" \
      "$SCRIPT_DIR/bin/$RUNNER" \
      "$SCRIPT_DIR/bin/$BINARY" \
-     "${CONFIG_ARGS[@]}" "$GAME" "${ARGS[@]}")
+     "$GAME" "${ARGS[@]}")
 
 # Wrap with systemd-inhibit so the surrounding GNOME/KDE session does not
 # auto-idle, lock, sleep or honour the lid switch while nucore is running.
