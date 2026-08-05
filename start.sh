@@ -219,9 +219,9 @@ case "$1" in
 esac
 
 # Nucore automatically reads ../config/pb2k.cfg from its bin/ working
-# directory. Pass only explicit user arguments here; they are parsed after
-# that file and can override it for one run.
-ARGS=("$@")
+# directory. Portable enforces only the project-wide no-watermark policy;
+# explicit user arguments remain cumulative and follow it.
+ARGS=(-nowatermark "$@")
 
 echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  portable_config=${PORTABLE_CONFIG:-none}  args=${ARGS[*]}"
 

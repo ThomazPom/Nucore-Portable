@@ -329,7 +329,8 @@ do not replace long-duration or real-cabinet validation of the ASIX variant.
 
 Nucore options use a single dash and are passed through unchanged. Common
 examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
-`-nojukeplay`. The launcher adds no implicit Nucore options.
+`-nojukeplay`. The launcher prepends only the project default `-nowatermark`;
+all supplied Nucore options follow it unchanged.
 
 ### Games
 
@@ -362,9 +363,11 @@ corresponding value for one run without changing the file:
 ./start.sh --no-reboot swe1_14 -window
 ```
 
-The shipped `pb2k.cfg` already supplies the normal fullscreen, 16-bpp and
-no-watermark defaults. The launcher therefore adds no hidden presentation
-arguments.
+The shipped `pb2k.cfg` supplies the normal fullscreen and 16-bpp defaults.
+Nucore-Portable additionally enforces `-nowatermark` on every launch. Nucore
+has no opposite command-line switch, so changing `WATERMARK=1` in `pb2k.cfg`
+does not re-enable it through this launcher; this is the one deliberate
+Portable presentation policy.
 
 Separately, `--config FILE` belongs to **Nucore-Portable**. It reloads a saved
 launcher command line; it is never passed to Nucore as a `.cfg` argument. Copy
@@ -496,7 +499,8 @@ Nucore loads `pb2k.cfg` first and then processes explicit command-line options.
 Thus `-window` can temporarily override `FULL_SCREEN=1`, and `-bpp 32` can
 temporarily override `BPP_ADJ=16`. Independent switches such as `-nojukeplay`,
 `-flipscreen` and `-nopause` apply only to that invocation. Nucore-Portable
-passes them through in their original order and does not manufacture defaults.
+passes them through in their original order after its sole implicit Nucore
+argument, `-nowatermark`.
 
 #### Low-level positional forms and legacy entries
 
