@@ -177,19 +177,38 @@ with that name did not predate the installer.
 
 These are Nucore controls, not launcher shortcuts:
 
-| Key | Function |
-|---|---|
-| `F1` | Exit Nucore; after cabinet integration this returns to the desktop |
-| `F2` | Toggle the screen upside down, useful while servicing the display |
-| `F3` | Decrease GI/light timing by one fine step |
-| `F4` | Increase GI/light timing by one fine step |
-| `F5` | Decrease GI/light timing by one coarse step |
-| `F6` | Increase GI/light timing by one coarse step |
+| Function key | Additional legacy binding | Function |
+|---|---|---|
+| `F1` | `,` | Exit Nucore; after cabinet integration this returns to the desktop |
+| `F2` | `.` | Toggle the screen upside down, useful while servicing the display |
+| `F3` | `/` | Decrease GI/light timing by one fine step |
+| `F4` | Right Shift | Increase GI/light timing by one fine step |
+| `F5` | Keypad `*` | Decrease GI/light timing by one coarse step |
+| `F6` | Left Alt | Increase GI/light timing by one coarse step |
+
+These aliases were recovered from the binary's special-key switch: PC
+scancodes `0x33`–`0x38` mirror F1–F6 at `0x3b`–`0x40`. The displayed symbol
+for the punctuation positions can vary with keyboard layout; the function keys
+are the clearest bindings for normal use.
 
 The F3–F6 adjustments compensate for GI-light flicker caused by timing
 differences between PCs. Nucore saves the selected timing. The playfield relay
 may click while it is being adjusted; the original manual says this is
-expected. No Nucore functions are documented for F7–F12.
+expected.
+
+That save is broader than the timing value: F3–F6 make Nucore rewrite the
+whole current `pb2k.cfg`. Consequently, temporary command-line overrides such
+as `-window`, `-fullscreen`, `-flipscreen` or `-bpp 32` can become persistent
+if F3–F6 are pressed during that run. F2 alone toggles inversion only in memory;
+pressing F3–F6 afterward can include the resulting inversion in the full-file
+save. A normal Nucore exit does **not** write `pb2k.cfg`; it saves game state
+(NVRAM, flash, SEE and EMS) separately.
+
+Pinbox differs here: testing confirms that it writes its current configuration
+back as part of its run/exit behavior, so a config-backed command-line choice
+can persist without an F3–F6 timing adjustment. Do not assume a Nucore and a
+Pinbox test leave `pb2k.cfg` in the same state. No Nucore functions are
+documented for F7–F12.
 
 Source: [Nucore User Manual, revision 2.0A, “Nucore Keyboard Commands”](https://o.pinside.com/c/58/34/c5834df1bceaaa90b4b77475b3e32b0c27742530.pdf).
 
@@ -368,6 +387,13 @@ launch:
 These arguments do not edit `pb2k.cfg`. When both are present, the last one
 wins for that process. A later launch without either argument returns to the
 persistent `FULL_SCREEN` value in the file.
+
+This describes launcher startup and a normal Nucore exit. Nucore's F3–F6
+timing controls deliberately save the entire current configuration, which can
+also capture active CLI video overrides. Pinbox has a different persistence
+path and writes its current configuration during its run/exit lifecycle. See
+the [function-key notes](#nucore-function-keys) before doing presentation tests
+against a cabinet configuration you want to preserve.
 
 The shipped `pb2k.cfg` supplies the normal fullscreen and 16-bpp defaults.
 Nucore-Portable additionally enforces `-nowatermark` on every launch. Nucore
