@@ -168,11 +168,56 @@ cause is configuration load order, an option-parser defect, or another later
 assignment. That narrower claim would require clean comparative breakpoints or
 disassembly of the relevant write.
 
-Nucore-Portable therefore implements a boundary-layer workaround: an explicit
-`-window` or `-fullscreen` updates only `FULL_SCREEN` in `pb2k.cfg` before the
-binary starts. With no explicit video-mode argument, the launcher leaves the
-file untouched. This does not patch or pretend to repair Nucore's internals;
-it makes the existing configuration interface deterministic.
+The decompiled control-flow map, checked against the original machine code,
+exposed the underlying ordering defect:
+
+```text
+parseCommandLineArguments(argc, argv)
+initializePB2KConfigurationAndHardware()
+  -> loadAndValidatePB2KConfiguration()
+```
+
+The second call resets and reloads the configuration globals after the CLI has
+set them. This affects at least `-window`, `-fullscreen`, `-flipscreen` and
+`-bpp`.
+
+The bundled `nucore` and `nucore_nwd` carry a 20-byte machine-code correction:
+
+1. the original CLI call is redirected to a 10-byte trampoline in executable
+   alignment padding;
+2. the trampoline calls the existing configuration loader and then jumps to
+   the existing CLI parser, preserving its original `argc`/`argv` stack ABI;
+3. the later duplicate configuration-loader call is replaced by five NOPs;
+4. the rest of the hardware wrapper remains in place, so `-parallel` is still
+   parsed before parallel-port detection.
+
+The exact patch is reproducible and guarded against unknown binaries by
+`src/patch-nucore-cli-order.sh`. Checksums are:
+
+| Binary | State | SHA-256 |
+|---|---|---|
+| `bin/nucore` | original | `83480e27cba13b09e7c2cd38b93457faa906b7ac112d4610cbd5d83246ddb734` |
+| `bin/nucore` | patched | `5cf4764e0fb900ebee97d3dc68523930d5b6d9856e73349d443c2dd6514ae334` |
+| `bin/nucore_nwd` | original | `bb9749227ea3782b06fed0d5298da582c684a71fd17407cb5e14e6a6035bff4d` |
+| `bin/nucore_nwd` | patched | `26ae45605abc7eae0d14addf69bafe8f6ba378533207b2a5e9d07ddfb69586e7` |
+
+GDB verification with `FULL_SCREEN=0`, `INVERT_ENABLE=0` and `BPP_ADJ=16`
+showed:
+
+```text
+no video argument  -> SDL flags 0x40000101, bpp 16
+-fullscreen        -> SDL flags 0xe0000101, bpp 16
+-bpp 32            -> SDL flags 0x40000101, bpp 32
+-flipscreen        -> current inversion 1, effective inversion 1
+```
+
+`SDL_FULLSCREEN` is the `0x80000000` difference in the second result.
+
+Nucore-Portable additionally retains its user-facing persistence policy: an
+explicit `-window` or `-fullscreen` updates only `FULL_SCREEN` in `pb2k.cfg`
+before launch. With neither argument, the launcher leaves the file untouched.
+The binary patch is broader: it makes the other configuration-backed CLI video
+options effective without requiring launcher-specific rewrites.
 
 ## Keep experiments honest
 

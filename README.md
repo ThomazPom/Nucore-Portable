@@ -568,9 +568,10 @@ an old, known behavior for a newer but less cabinet-tested one. Use the smallest
 change that solves an observed problem; the native SDL 1.2 path with the full
 shim remains the default.
 
-> **A useful preservation pattern.** Nucore itself is not being modernized: its
-> machine code, emulation logic and old API expectations stay untouched.
-> Instead, the boundaries around it are renewed independently—an ELF loader for
+> **A useful preservation pattern.** Nucore's emulation logic and old API
+> expectations stay untouched apart from one documented initialization-order
+> correction in the two bundled Nucore executables. Most modernization remains
+> at the boundaries—an ELF loader for
 > current x86_64 hosts, SDL12-compat over SDL 2, ALSA plugins reaching
 > PulseAudio/PipeWire, an ASIX library using `libstdc++.so.6`, and small shims
 > for legacy signal/audio behavior. The old program continues to see the world
@@ -975,9 +976,10 @@ omits that loader argument for the current launch.
   selection” above before using direct hardware devices.
 * x86_64 Linux only. Running on ARM hosts would need an extra i386-on-ARM
   layer (qemu-user) which is out of scope here.
-* The legacy nucore EULA (in `install/`) restricts modification, but allows
-  redistribution of unmodified copies. This bundle redistributes nucore
-  unmodified; only the launcher + bundle around it are new.
+* The bundled `nucore` and `nucore_nwd` contain the documented 20-byte
+  configuration/CLI initialization-order patch described in
+  [Nucore binary archaeology](BINARY-ARCHAEOLOGY.md). Their original and
+  patched checksums are recorded there.
 
 ## Privileges (no more `sudo run nucore`)
 
@@ -1042,10 +1044,15 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
 
 ## Provenance
 
-* `bin/{nucore, nucore.225, nucore.old, run, n_update, n_update.old}` —
-  extracted from `FlipperFiles/Files/Lubuntu_packages/nucore-2.25.3r-package-v003-wahcade.deb`
-* `bin/{nucore_nwd, runrd, run_pb_rd, pinbox_nwd, sigio_fix.so}` — local
-  builds with the watchdog reboot path neutralised (testing variants)
+* `bin/nucore` — extracted from
+  `FlipperFiles/Files/Lubuntu_packages/nucore-2.25.3r-package-v003-wahcade.deb`,
+  then patched for configuration-before-CLI initialization order
+* `bin/nucore_nwd` — watchdog-neutralised testing variant carrying the same
+  initialization-order patch
+* `bin/{nucore.225, nucore.old, run, n_update, n_update.old}` — extracted from
+  the same upstream Nucore package
+* `bin/{runrd, run_pb_rd, pinbox_nwd, sigio_fix.so}` — local testing/support
+  builds
 * `bin/pinbox` — the pinbox fork of nucore
 * `bundlex86/` — pre-curated i386 system libraries (libc, libSDL, libmpg123,
   libasound, ld-linux.so.2, etc.) collected from Debian/Ubuntu i386 packages
