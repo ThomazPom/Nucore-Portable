@@ -404,6 +404,12 @@ Pinbox prompts.
 
 ### Nucore command-line reference recovered from the binary
 
+For the reproducible low-level methods behind this recovery—live `argv`
+inspection, string and disassembly work, loader tracing, and GDB breakpoints on
+SDL boundaries—see [Nucore binary archaeology](BINARY-ARCHAEOLOGY.md). It also
+records what is proven, and what remains an inference, about the current
+`-window` investigation.
+
 The original manual is not required for this table. The option names,
 argument requirements, validation ranges, switch behavior and diagnostic
 messages were recovered directly from the stripped executables. `nucore` and
