@@ -521,6 +521,17 @@ an old, known behavior for a newer but less cabinet-tested one. Use the smallest
 change that solves an observed problem; the native SDL 1.2 path with the full
 shim remains the default.
 
+> **A useful preservation pattern.** Nucore itself is not being modernized: its
+> machine code, emulation logic and old API expectations stay untouched.
+> Instead, the boundaries around it are renewed independently—an ELF loader for
+> current x86_64 hosts, SDL12-compat over SDL 2, ALSA plugins reaching
+> PulseAudio/PipeWire, an ASIX library using `libstdc++.so.6`, and small shims
+> for legacy signal/audio behavior. The old program continues to see the world
+> it expects while each adapter speaks to a newer Linux layer. The same approach
+> can preserve other closed-source or abandoned programs: identify one obsolete
+> boundary, place a reversible compatibility layer there, and A/B test it
+> without rewriting the program's internals.
+
 “Modern” is relative to Nucore, not shorthand for “latest.” The original
 Nucore package is from 2018 and includes still older dependencies (the bundled
 FTDI D2XX library is approximately 2010). The optional ASIX `libftchipid` 0.1.0
