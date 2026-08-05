@@ -356,20 +356,18 @@ server ports and tick adjustment. Portable-specific choices such as
 `--no-reboot`, `--asix`, `--sdl12-compat` and shim selection remain launcher
 options.
 
-Nucore 2.25.3 does not reliably apply `-window` over `FULL_SCREEN=1`. To make
-the public command deterministic, Nucore-Portable handles the two video-mode
-arguments specially:
+The bundled Nucore binaries correct the original initialization order, so
+explicit video arguments reliably override the loaded configuration for one
+launch:
 
 ```sh
-./start.sh --no-reboot swe1_14 -window     # writes FULL_SCREEN=0
-./start.sh --no-reboot swe1_14 -fullscreen # writes FULL_SCREEN=1
+./start.sh --no-reboot swe1_14 -window
+./start.sh --no-reboot swe1_14 -fullscreen
 ```
 
-Only the `FULL_SCREEN` key is changed. If it is missing, it is appended; if it
-appears more than once, it is normalized to one entry. When both arguments are
-present, the last one wins. This setting is persistent, matching the resulting
-Pinbox behavior. A launch containing neither argument does not rewrite
-`pb2k.cfg` at all.
+These arguments do not edit `pb2k.cfg`. When both are present, the last one
+wins for that process. A later launch without either argument returns to the
+persistent `FULL_SCREEN` value in the file.
 
 The shipped `pb2k.cfg` supplies the normal fullscreen and 16-bpp defaults.
 Nucore-Portable additionally enforces `-nowatermark` on every launch. Nucore
@@ -441,9 +439,9 @@ options after the game name when using `start.sh`.
 | `-parallel ADDRESS` | hexadecimal address | Redirect the emulated parallel port to a real host LPT address, normally `0x378` |
 
 `-fullscreen` and `-window` set opposite values; if both are supplied, the
-last one wins. Nucore-Portable persists that result as `FULL_SCREEN=1` or
-`FULL_SCREEN=0` before starting the selected binary because the original
-Nucore executable does not reliably override the configuration itself.
+last one wins for that launch. The patched bundled Nucore executables load
+`pb2k.cfg` first and apply command-line values afterward; `start.sh` does not
+rewrite the file.
 
 #### Functional options omitted from the embedded help
 
@@ -513,9 +511,9 @@ usable feature.
 Nucore-Portable passes independent switches such as `-nojukeplay`,
 `-flipscreen`, `-nopause` and `-bpp 32` through in their original order after
 its sole implicit Nucore argument, `-nowatermark`; they apply only to that
-invocation. Video mode is the deliberate exception: `-window` and
-`-fullscreen` persist `FULL_SCREEN=0` and `FULL_SCREEN=1`, respectively, so
-both Nucore and Pinbox start in the requested mode.
+invocation. The same temporary behavior now applies to `-window`,
+`-fullscreen`, `-flipscreen` and `-bpp`: they override the persistent values
+loaded from `pb2k.cfg` without editing it.
 
 #### Low-level positional forms and legacy entries
 

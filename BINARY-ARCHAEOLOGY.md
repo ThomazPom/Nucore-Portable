@@ -213,11 +213,9 @@ no video argument  -> SDL flags 0x40000101, bpp 16
 
 `SDL_FULLSCREEN` is the `0x80000000` difference in the second result.
 
-Nucore-Portable additionally retains its user-facing persistence policy: an
-explicit `-window` or `-fullscreen` updates only `FULL_SCREEN` in `pb2k.cfg`
-before launch. With neither argument, the launcher leaves the file untouched.
-The binary patch is broader: it makes the other configuration-backed CLI video
-options effective without requiring launcher-specific rewrites.
+`start.sh` does not rewrite `pb2k.cfg`. The binary patch makes `-window`,
+`-fullscreen`, `-flipscreen` and `-bpp` temporary overrides of the persistent
+configuration, which is the ordering implied by Nucore's embedded help.
 
 ## Keep experiments honest
 

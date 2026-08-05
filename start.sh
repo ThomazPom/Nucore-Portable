@@ -223,66 +223,6 @@ esac
 # explicit user arguments remain cumulative and follow it.
 ARGS=(-nowatermark "$@")
 
-# Nucore 2.25.3 does not reliably let -window override FULL_SCREEN=1 from
-# pb2k.cfg (Pinbox does). Make both front ends deterministic and persistent:
-# the last explicit video-mode argument wins and updates only FULL_SCREEN.
-# With neither argument, leave the config byte-for-byte untouched.
-FULL_SCREEN_VALUE=""
-for arg in "${ARGS[@]}"; do
-    case "$arg" in
-        -window)     FULL_SCREEN_VALUE=0 ;;
-        -fullscreen) FULL_SCREEN_VALUE=1 ;;
-    esac
-done
-
-set_fullscreen_config() {
-    local value="$1"
-    local cfg="$SCRIPT_DIR/config/pb2k.cfg"
-    local tmp
-
-    if [ -e "$cfg" ] && [ ! -f "$cfg" ]; then
-        echo "start.sh: cannot update FULL_SCREEN: not a regular file: $cfg" >&2
-        exit 2
-    fi
-    mkdir -p -- "${cfg%/*}"
-    tmp=$(mktemp "${cfg}.tmp.XXXXXX") || exit 1
-
-    if [ -f "$cfg" ]; then
-        awk -v value="$value" '
-            BEGIN { written = 0 }
-            /^[[:space:]]*FULL_SCREEN[[:space:]]*=/ {
-                if (!written) {
-                    print "FULL_SCREEN=" value
-                    written = 1
-                }
-                next
-            }
-            { print }
-            END {
-                if (!written)
-                    print "FULL_SCREEN=" value
-            }
-        ' "$cfg" >"$tmp" || { rm -f -- "$tmp"; exit 1; }
-        chmod --reference="$cfg" "$tmp" || { rm -f -- "$tmp"; exit 1; }
-        chown --reference="$cfg" "$tmp" || { rm -f -- "$tmp"; exit 1; }
-        if cmp -s -- "$cfg" "$tmp"; then
-            rm -f -- "$tmp"
-            return
-        fi
-    else
-        printf 'FULL_SCREEN=%s\n' "$value" >"$tmp" || {
-            rm -f -- "$tmp"; exit 1;
-        }
-    fi
-
-    mv -f -- "$tmp" "$cfg"
-    echo "+ config/pb2k.cfg: FULL_SCREEN=$value"
-}
-
-if [ -n "$FULL_SCREEN_VALUE" ]; then
-    set_fullscreen_config "$FULL_SCREEN_VALUE"
-fi
-
 echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  portable_config=${PORTABLE_CONFIG:-none}  args=${ARGS[*]}"
 
 # ── escalate via sudo (single, simple path) ─────────────────────────────────
