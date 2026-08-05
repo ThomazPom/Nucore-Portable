@@ -836,7 +836,8 @@ update/               *_update.bin (one update at a time — see below)
                       the "Community updates" section below — but is
                       not redistributed here.
 resources/            UI overlays, jukebox, watermark, load screens
-config/               leds.cfg, pb2k.cfg, servers.txt
+config/               Nucore's leds.cfg, pb2k.cfg and servers.txt, plus the
+                      Nucore-Portable command-line config example
 music/                jukebox playlist landing zone (empty by default)
 install/              upstream nucore install assets (kept for reference)
 ```

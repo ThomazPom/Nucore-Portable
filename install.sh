@@ -85,6 +85,11 @@ if [ -n "$CONFIG_IN" ]; then
     [ -f "$PORTABLE_CONFIG" ] || {
         echo "install.sh: portable config is not a regular file: $PORTABLE_CONFIG" >&2; exit 2;
     }
+    if ! sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$PORTABLE_CONFIG" \
+        | xargs -n1 printf '%s\n' >/dev/null; then
+        echo "install.sh: cannot parse portable config: $PORTABLE_CONFIG" >&2
+        exit 2
+    fi
     case "$PORTABLE_CONFIG" in
         *[!A-Za-z0-9_./-]*)
             echo "install.sh: installed config path contains unsupported characters: $PORTABLE_CONFIG" >&2

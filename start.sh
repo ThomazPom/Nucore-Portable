@@ -151,7 +151,9 @@ while [ $# -gt 0 ]; do
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
         --no-sigio-shim) SHIM_SIGIO=0; shift ;;
         --no-root)     ROOT_PREF=none; shift ;;
-        --root)        ROOT_PREF="$2"; shift 2 ;;
+        --root)
+            [ "$#" -ge 2 ] || { echo "start.sh: --root requires a value" >&2; exit 2; }
+            ROOT_PREF="$2"; shift 2 ;;
         --root=*)      ROOT_PREF="${1#--root=}"; shift ;;
         --no-inhibit)  USE_INHIBIT=0; shift ;;
         --)            shift; break ;;
