@@ -1,0 +1,7 @@
+# Saved Nucore-Portable command line. Full-line comments and blank lines are
+# ignored. Quotes may group words; shell variables and commands are not run.
+--no-reboot
+--sdl12-compat
+swe1_14
+-window
+-bpp 16

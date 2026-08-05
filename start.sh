@@ -3,6 +3,7 @@
 #
 # Usage: ./start.sh [--no-reboot] [--pinbox] [--asix] [--sdl12-compat]
 #                   [--no-shim] [--no-audio-shim] [--no-sigio-shim]
+#                   [--config FILE]
 #                   [--] [game] [extra args...]
 #
 # Production targets (default):
@@ -33,6 +34,9 @@
 #   --no-sigio-shim
 #                 keep audio interventions but disable RTC/SIGIO protection.
 #                 Diagnostic only: this may restore the legacy boot/crash bug.
+#   --config FILE prepend a saved Nucore-Portable command line. The file may
+#                 contain launcher --options, a game and Nucore -options.
+#                 This is unrelated to Nucore's automatic config/pb2k.cfg.
 #
 # game = swe1_14 (default) | rfm_15 | auto
 #   swe1_14   Star Wars Episode 1 - Revision 1.4
@@ -80,6 +84,52 @@ set -e
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
+
+# Extract Nucore-Portable's own --config before normal option parsing. Its
+# contents are prepended, so explicit command-line words can add to the saved
+# command. GNU xargs supplies shell-like quote parsing without eval: command
+# substitutions and variables in the file are never executed or expanded.
+PORTABLE_CONFIG=""
+CLI_WORDS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --config)
+            [ "$#" -ge 2 ] || { echo "start.sh: --config requires a file" >&2; exit 2; }
+            PORTABLE_CONFIG="$2"; shift 2 ;;
+        --config=)
+            echo "start.sh: --config requires a file" >&2; exit 2 ;;
+        --config=*)
+            PORTABLE_CONFIG="${1#--config=}"; shift ;;
+        --)
+            CLI_WORDS+=("$@"); break ;;
+        --*)
+            CLI_WORDS+=("$1"); shift ;;
+        *)
+            CLI_WORDS+=("$@"); break ;;
+    esac
+done
+
+CONFIG_WORDS=()
+if [ -n "$PORTABLE_CONFIG" ]; then
+    case "$PORTABLE_CONFIG" in
+        /*) ;;
+        *) PORTABLE_CONFIG="$SCRIPT_DIR/$PORTABLE_CONFIG" ;;
+    esac
+    PORTABLE_CONFIG=$(readlink -f -- "$PORTABLE_CONFIG") || {
+        echo "start.sh: portable config does not exist" >&2; exit 2;
+    }
+    [ -f "$PORTABLE_CONFIG" ] || {
+        echo "start.sh: portable config is not a regular file: $PORTABLE_CONFIG" >&2; exit 2;
+    }
+    CONFIG_TEXT=$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$PORTABLE_CONFIG")
+    if [ -n "$CONFIG_TEXT" ]; then
+        CONFIG_TEXT=$(printf '%s\n' "$CONFIG_TEXT" | xargs -n1 printf '%s\n') || {
+            echo "start.sh: cannot parse portable config: $PORTABLE_CONFIG" >&2; exit 2;
+        }
+        mapfile -t CONFIG_WORDS <<< "$CONFIG_TEXT"
+    fi
+fi
+set -- "${CONFIG_WORDS[@]}" "${CLI_WORDS[@]}"
 
 NO_REBOOT=0
 PINBOX=0
@@ -171,7 +221,7 @@ esac
 # that file and can override it for one run.
 ARGS=("$@")
 
-echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  args=${ARGS[*]}"
+echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  portable_config=${PORTABLE_CONFIG:-none}  args=${ARGS[*]}"
 
 # ── escalate via sudo (single, simple path) ─────────────────────────────────
 # Already root? Or already have CAP_SYS_RAWIO in our effective set

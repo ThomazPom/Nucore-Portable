@@ -72,19 +72,42 @@ echo "Bundle root  : $SCRIPT_DIR"
 echo "Mode         : in-session (scoped systemd/polkit/autologin changes)"
 echo
 
-read -r -p "Default game [swe1_14/rfm_15/auto] (default: swe1_14): " GAME_IN
-case "$GAME_IN" in
-    swe1_14|rfm_15|auto) DEFAULT_GAME="$GAME_IN" ;;
-    swe1)                DEFAULT_GAME=swe1_14 ;;
-    rfm)                 DEFAULT_GAME=rfm_15 ;;
-    *)                   DEFAULT_GAME=swe1_14 ;;
-esac
+PORTABLE_CONFIG=""
+read -r -p "Nucore-Portable command-line config (blank: none): " CONFIG_IN
+if [ -n "$CONFIG_IN" ]; then
+    case "$CONFIG_IN" in
+        /*) PORTABLE_CONFIG="$CONFIG_IN" ;;
+        *)  PORTABLE_CONFIG="$SCRIPT_DIR/$CONFIG_IN" ;;
+    esac
+    PORTABLE_CONFIG=$(readlink -f -- "$PORTABLE_CONFIG") || {
+        echo "install.sh: portable config does not exist" >&2; exit 2;
+    }
+    [ -f "$PORTABLE_CONFIG" ] || {
+        echo "install.sh: portable config is not a regular file: $PORTABLE_CONFIG" >&2; exit 2;
+    }
+    case "$PORTABLE_CONFIG" in
+        *[!A-Za-z0-9_./-]*)
+            echo "install.sh: installed config path contains unsupported characters: $PORTABLE_CONFIG" >&2
+            exit 2 ;;
+    esac
+fi
 
+DEFAULT_GAME=swe1_14
 USE_PINBOX=0
-ask "Boot the pinbox fork instead of nucore?" N && USE_PINBOX=1
+if [ -z "$PORTABLE_CONFIG" ]; then
+    read -r -p "Default game [swe1_14/rfm_15/auto] (default: swe1_14): " GAME_IN
+    case "$GAME_IN" in
+        swe1_14|rfm_15|auto) DEFAULT_GAME="$GAME_IN" ;;
+        swe1)                DEFAULT_GAME=swe1_14 ;;
+        rfm)                 DEFAULT_GAME=rfm_15 ;;
+    esac
+    ask "Boot the pinbox fork instead of nucore?" N && USE_PINBOX=1
+fi
 
 EXTRA_FLAGS=""
 [ $USE_PINBOX -eq 1 ] && EXTRA_FLAGS="--pinbox"
+CONFIG_FLAG=""
+[ -n "$PORTABLE_CONFIG" ] && CONFIG_FLAG="--config=$PORTABLE_CONFIG"
 
 DO_AUTOSTART=1
 ask "Auto-launch on graphical login (recommended)?" Y || DO_AUTOSTART=0
@@ -121,8 +144,13 @@ fi
 
 echo
 echo "About to apply:"
-echo "  default game        : $DEFAULT_GAME"
-echo "  emulator            : $([ $USE_PINBOX -eq 1 ] && echo pinbox || echo nucore)"
+echo "  portable config     : ${PORTABLE_CONFIG:-none}"
+if [ -n "$PORTABLE_CONFIG" ]; then
+    echo "  saved command line  : authoritative"
+else
+    echo "  default game        : $DEFAULT_GAME"
+    echo "  emulator            : $([ $USE_PINBOX -eq 1 ] && echo pinbox || echo nucore)"
+fi
 echo "  autostart on login  : $DO_AUTOSTART"
 echo "  display-manager autologin : $([ $DO_AUTOLOGIN -eq 1 ] && echo "yes ($AUTOLOGIN_USER)" || echo no)"
 echo "  install path        : $SCRIPT_DIR (run from where it lives — no copy)"
@@ -143,6 +171,11 @@ for src in "$SCRIPT_DIR"/roms/*_nucore.bin; do
 done
 
 UNIT=/etc/systemd/system/nucore.service
+if [ -n "$PORTABLE_CONFIG" ]; then
+    SERVICE_ARGS="$CONFIG_FLAG"
+else
+    SERVICE_ARGS="$EXTRA_FLAGS $DEFAULT_GAME"
+fi
 echo "[+] writing $UNIT"
 cat > "$UNIT" <<EOF
 [Unit]
@@ -157,7 +190,7 @@ Type=simple
 WorkingDirectory=$SCRIPT_DIR
 # No User= line: runs as root, gets CAP_SYS_RAWIO + CAP_SYS_NICE for free.
 # That is exactly what nucore needs for parallel-port ioperm and RT audio.
-ExecStart=$WRAPPER $EXTRA_FLAGS $DEFAULT_GAME
+ExecStart=$WRAPPER $SERVICE_ARGS
 # F1 / Esc → nucore exits cleanly → we DO NOT bounce back. User explicitly
 # asked for the desktop, so go to the desktop. To relaunch from a desktop
 # terminal: systemctl start nucore (no auth needed for owner of the unit

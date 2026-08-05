@@ -104,8 +104,9 @@ re-run `./install.sh` if you switch to a GNOME desktop later.
 
 You'll be asked, one by one:
 
-* default game on boot (`swe1_14` / `rfm_15` / `auto`)
-* boot the pinbox fork instead of nucore (default no)
+* optional Nucore-Portable command-line config
+* if blank: default game (`swe1_14` / `rfm_15` / `auto`) and whether to boot
+  the Pinbox fork
 * auto-launch on graphical login (default yes)
 * enable display-manager autologin (default yes), and which user
 
@@ -295,6 +296,7 @@ Examples:
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
 | `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
+| `--config FILE` | none | Prepend a saved Nucore-Portable command line containing `--` launcher options, a game and/or `-` Nucore options |
 | `--root=run0` | auto | Force systemd `run0` privilege escalation |
 | `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
 | `--root=sudo` | auto | Force classic `sudo` privilege escalation |
@@ -337,7 +339,7 @@ examples include `-window`, `-fullscreen`, `-bpp 16`, `-parallel 0x378`, and
 | `rfm_15` or `rfm` | Revenge From Mars — Revision 1.5 |
 | `auto` | Ask Nucore to detect the game |
 
-### Nucore's own configuration file
+### Two different kinds of configuration
 
 Nucore automatically reads the fixed file `config/pb2k.cfg` when it starts.
 Edit that file directly for persistent Nucore settings:
@@ -350,9 +352,8 @@ nano config/pb2k.cfg
 It controls Nucore values such as gamma, fullscreen, screen inversion, renderer
 depth, watermark, jukebox/playlist behavior, USB, tournament/server settings,
 server ports and tick adjustment. Nucore-Portable does not parse or rewrite
-this file, and it has no separate `.cfg` format. Portable-specific choices such
-as `--no-reboot`, `--asix`, `--sdl12-compat` and shim selection remain launcher
-options.
+this file. Portable-specific choices such as `--no-reboot`, `--asix`,
+`--sdl12-compat` and shim selection remain launcher options.
 
 Explicit Nucore arguments are parsed after `pb2k.cfg`, so they override its
 corresponding value for one run without changing the file:
@@ -364,6 +365,39 @@ corresponding value for one run without changing the file:
 The shipped `pb2k.cfg` already supplies the normal fullscreen, 16-bpp and
 no-watermark defaults. The launcher therefore adds no hidden presentation
 arguments.
+
+Separately, `--config FILE` belongs to **Nucore-Portable**. It reloads a saved
+launcher command line; it is never passed to Nucore as a `.cfg` argument. Copy
+the example and put launcher options (`--...`), the game, and Nucore options
+(`-...`) in it:
+
+```sh
+cp config/nucore-portable.conf.example config/cabinet.conf
+nano config/cabinet.conf
+./start.sh --config config/cabinet.conf
+```
+
+For example, the file can contain:
+
+```text
+--asix --sdl12-compat
+swe1_14
+-fullscreen -bpp 16 -parallel 0x378
+```
+
+Whitespace and shell-style quotes delimit arguments; blank lines and full-line
+`#` comments are ignored. Nothing is evaluated as shell code: `$HOME`, command
+substitutions and redirections remain ordinary argument text. Keep the normal
+command order: Portable `--options` first, then the game, then Nucore
+`-options`. Words supplied
+after `--config FILE` are appended, which is useful when the saved file omits
+the game or when adding another independent Nucore option. Do not specify two
+games: the first positional game ends launcher parsing and the second would be
+passed to Nucore as an extra argument.
+
+When `install.sh` is given a Portable config, that complete saved command line
+is authoritative for the service, so the installer skips its separate game and
+Pinbox prompts.
 
 ### Nucore command-line reference recovered from the binary
 
@@ -900,7 +934,9 @@ for why `--preload` and not `LD_PRELOAD=`).
 
 ## How the launcher works (one paragraph)
 
-`start.sh` parses its runner, SDL, shim, privilege and inhibitor options, then
+`start.sh` first safely tokenizes an optional Nucore-Portable command-line
+config, prepends those saved words to the explicit command line, then parses
+its runner, SDL, shim, privilege and inhibitor options. It
 picks a `(runner, binary)` pair and calls
 `bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. Nucore reads
 its own fixed `../config/pb2k.cfg`; explicit arguments remain last so they can
