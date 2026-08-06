@@ -11,8 +11,13 @@ if [ "${1:-}" = --client ]; then
     shift
     # xinit supplies DISPLAY and XAUTHORITY. Force both SDL implementations
     # through X11 so native SDL and sdl12-compat share the proven path.
+    # xinit puts its client in a separate process group.  Leaving stdin on the
+    # service's controlling tty makes the legacy runner read from tty1 as a
+    # background group, so the kernel suspends it with SIGTTIN before SDL can
+    # create a window. Keyboard input is delivered by X11; detach terminal
+    # input while keeping stdout/stderr in the journal.
     exec env SDL_VIDEODRIVER=x11 \
-        "$ROOT_DIR/start.sh" --no-root --no-inhibit "$@"
+        "$ROOT_DIR/start.sh" --no-root --no-inhibit "$@" </dev/null
 fi
 
 OPEN_MAINTENANCE=1
