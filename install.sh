@@ -101,6 +101,9 @@ DIRECT CONSOLE MODE IS ADVANCED AND PROVIDES NO SCALING.
 Use it only with a display path already proven to present 640x480 correctly
 (for example an arcade CRT, ArcadeVGA, or a monitor with its own scaler).
 SDL12-compat is not supported in this profile.
+The installed service always requests Nucore fullscreen at 16 bpp: this is the
+legacy framebuffer path Nucore was designed for. These command-line values
+override FULL_SCREEN and BPP_ADJ from config/pb2k.cfg at boot.
 EOF
     read -r -p "Type DIRECT CONSOLE to continue: " CONSOLE_ACK
     [ "$CONSOLE_ACK" = "DIRECT CONSOLE" ] || { echo "Console install aborted."; exit 2; }
@@ -122,6 +125,14 @@ echo "Profile      : $INSTALL_MODE"
 echo
 
 PORTABLE_CONFIG=""
+PORTABLE_CONFIG_WORDS=""
+cat <<'EOF'
+CONFIGURATION SOURCE
+Leave this blank for the guided questions below. Alternatively, enter a
+Nucore-Portable command-line config containing the complete launcher/game
+selection; the installer will load it first and still append the selected
+profile's explicit video mode afterward.
+EOF
 read -r -p "Nucore-Portable command-line config (blank: none): " CONFIG_IN
 if [ -n "$CONFIG_IN" ]; then
     case "$CONFIG_IN" in
@@ -134,9 +145,14 @@ if [ -n "$CONFIG_IN" ]; then
     [ -f "$PORTABLE_CONFIG" ] || {
         echo "install.sh: portable config is not a regular file: $PORTABLE_CONFIG" >&2; exit 2;
     }
-    if ! sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$PORTABLE_CONFIG" \
-        | xargs -n1 printf '%s\n' >/dev/null; then
+    if ! PORTABLE_CONFIG_WORDS=$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$PORTABLE_CONFIG" \
+        | xargs -n1 printf '%s\n'); then
         echo "install.sh: cannot parse portable config: $PORTABLE_CONFIG" >&2
+        exit 2
+    fi
+    if [ "$INSTALL_MODE" = console ] &&
+       printf '%s\n' "$PORTABLE_CONFIG_WORDS" | grep -Fxq -- --sdl12-compat; then
+        echo "install.sh: console profile cannot use --sdl12-compat from $PORTABLE_CONFIG" >&2
         exit 2
     fi
     case "$PORTABLE_CONFIG" in
@@ -148,18 +164,97 @@ fi
 
 DEFAULT_GAME=swe1_14
 USE_PINBOX=0
+USE_NO_REBOOT=0
+USE_SDL12_COMPAT=0
+USE_ASIX=0
 if [ -z "$PORTABLE_CONFIG" ]; then
+    cat <<'EOF'
+
+EMULATOR SETUP
+The production runner includes Nucore's cabinet watchdog. It can reboot the
+computer after an emulator stall. Keep it for a finished cabinet; disable it
+while commissioning unfamiliar hardware or configuration.
+EOF
+    ask "Enable the production watchdog?" Y || USE_NO_REBOOT=1
+
     read -r -p "Default game [swe1_14/rfm_15/auto] (default: swe1_14): " GAME_IN
     case "$GAME_IN" in
+        "")                  ;;
         swe1_14|rfm_15|auto) DEFAULT_GAME="$GAME_IN" ;;
         swe1)                DEFAULT_GAME=swe1_14 ;;
         rfm)                 DEFAULT_GAME=rfm_15 ;;
+        *) echo "install.sh: expected swe1_14, rfm_15 or auto" >&2; exit 2 ;;
     esac
     ask "Boot the pinbox fork instead of nucore?" N && USE_PINBOX=1
+
+    if [ "$INSTALL_MODE" != console ]; then
+        cat <<'EOF'
+
+SDL IMPLEMENTATION
+Native SDL 1.2 is the established default. SDL12-compat preserves Nucore's
+SDL 1.2 interface but implements it over bundled SDL 2; it may integrate better
+with modern displays, but remains an opt-in compatibility experiment.
+EOF
+        ask "Use SDL12-compat instead of native SDL 1.2?" N && USE_SDL12_COMPAT=1
+    fi
+
+    cat <<'EOF'
+
+FTDI/USB LIBRARY
+The original Nucore libftchipid path is the proven default and carries its old
+libstdc++.so.5 dependency inside the bundle. The opt-in ASIX 0.1.0 path uses
+libstdc++.so.6 and is newer, but has less real-cabinet validation.
+EOF
+    ask "Use the experimental newer ASIX library path?" N && USE_ASIX=1
+fi
+
+cat <<'EOF'
+
+RUNTIME PROTECTION
+The signal and audio shims stay enabled by default in every installation. Their
+disable switches are diagnostic tools, not cabinet recommendations; advanced
+users can place --no-audio-shim, --no-sigio-shim, or --no-shim in a Portable
+config for a controlled A/B test.
+EOF
+
+VIDEO_ARGS=""
+VIDEO_DESCRIPTION="use config/pb2k.cfg"
+if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = desktop ]; then
+    cat <<'EOF'
+
+VIDEO SETUP
+Fullscreen is recommended for a cabinet. 32 bpp is recommended on a graphical
+display: Xorg/the desktop handles the physical monitor while Nucore gets its
+expected surface. The selected values are appended to the service command line,
+so they override old FULL_SCREEN/BPP_ADJ values in config/pb2k.cfg and any
+earlier video option in the Portable config.
+EOF
+    if ask "Start Nucore fullscreen?" Y; then
+        VIDEO_MODE=-fullscreen
+        VIDEO_MODE_NAME=fullscreen
+    else
+        VIDEO_MODE=-window
+        VIDEO_MODE_NAME=windowed
+        echo "[!] Windowed mode is intended for diagnosis, not a finished cabinet."
+    fi
+    read -r -p "Nucore colour depth [32] (16 or 32): " VIDEO_BPP
+    VIDEO_BPP=${VIDEO_BPP:-32}
+    case "$VIDEO_BPP" in
+        16|32) ;;
+        *) echo "install.sh: colour depth must be 16 or 32" >&2; exit 2 ;;
+    esac
+    VIDEO_ARGS="$VIDEO_MODE -bpp $VIDEO_BPP"
+    VIDEO_DESCRIPTION="$VIDEO_MODE_NAME, ${VIDEO_BPP} bpp (explicit service override)"
+elif [ "$INSTALL_MODE" = console ]; then
+    VIDEO_ARGS="-fullscreen -bpp 16"
+    VIDEO_DESCRIPTION="fullscreen, 16 bpp (required console default)"
 fi
 
 EXTRA_FLAGS=""
 [ $USE_PINBOX -eq 1 ] && EXTRA_FLAGS="--pinbox"
+[ $USE_NO_REBOOT -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --no-reboot"
+[ $USE_SDL12_COMPAT -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --sdl12-compat"
+[ $USE_ASIX -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --asix"
 CONFIG_FLAG=""
 [ -n "$PORTABLE_CONFIG" ] && CONFIG_FLAG="--config=$PORTABLE_CONFIG"
 
@@ -203,12 +298,17 @@ echo
 echo "About to apply:"
 echo "  portable config     : ${PORTABLE_CONFIG:-none}"
 if [ -n "$PORTABLE_CONFIG" ]; then
-    echo "  saved command line  : authoritative"
+    echo "  saved command line  : loaded first"
+    echo "  config words        : $(printf '%s\n' "$PORTABLE_CONFIG_WORDS" | paste -sd' ' -)"
 else
     echo "  default game        : $DEFAULT_GAME"
     echo "  emulator            : $([ $USE_PINBOX -eq 1 ] && echo pinbox || echo nucore)"
+    echo "  watchdog            : $([ $USE_NO_REBOOT -eq 1 ] && echo disabled || echo production)"
+    echo "  SDL                 : $([ $USE_SDL12_COMPAT -eq 1 ] && echo SDL12-compat || echo native SDL 1.2)"
+    echo "  FTDI library        : $([ $USE_ASIX -eq 1 ] && echo 'ASIX 0.1.0 (experimental)' || echo 'original Nucore')"
 fi
 echo "  autostart on login  : $DO_AUTOSTART"
+echo "  video               : $VIDEO_DESCRIPTION"
 case "$INSTALL_MODE" in
     xorg-only)
         echo "  boot path           : multi-user.target -> tty1 -> minimal Xorg -> Nucore"
@@ -239,9 +339,9 @@ done
 
 UNIT=/etc/systemd/system/nucore.service
 if [ -n "$PORTABLE_CONFIG" ]; then
-    SERVICE_ARGS="$CONFIG_FLAG"
+    SERVICE_ARGS="$CONFIG_FLAG $VIDEO_ARGS"
 else
-    SERVICE_ARGS="$EXTRA_FLAGS $DEFAULT_GAME"
+    SERVICE_ARGS="$EXTRA_FLAGS $DEFAULT_GAME $VIDEO_ARGS"
 fi
 
 if [ "$INSTALL_MODE" != desktop ]; then
@@ -277,7 +377,7 @@ if [ "$INSTALL_MODE" != desktop ]; then
         EXEC_START="$XORG_WRAPPER $SERVICE_ARGS"
     else
         DESCRIPTION="direct fbcon cabinet (advanced)"
-        EXEC_START="$SCRIPT_DIR/start.sh --console --no-root --no-inhibit $SERVICE_ARGS -fullscreen -bpp 16"
+        EXEC_START="$SCRIPT_DIR/start.sh --console --no-root --no-inhibit $SERVICE_ARGS"
     fi
 
     echo "[+] writing $INSTALL_MODE $UNIT"

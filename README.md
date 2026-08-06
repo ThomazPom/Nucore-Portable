@@ -72,11 +72,36 @@ installed display manager is started for maintenance; when none exists, tty1
 gets a normal login prompt. Stopping the service, uninstalling, shutting down,
 or rebooting does not trigger that fallback.
 
+For `xorg-only`, the installer asks for fullscreen/windowed output and Nucore's
+colour depth. The cabinet defaults are **fullscreen at 32 bpp**. These become
+explicit Nucore command-line arguments and therefore override stale
+`FULL_SCREEN` or `BPP_ADJ` values in `config/pb2k.cfg`. The `console` profile
+instead deliberately fixes **fullscreen at 16 bpp**, matching its legacy
+native-SDL framebuffer purpose. The final confirmation screen prints the exact
+choice before changing the system.
+
 The installer never installs a desktop environment. In `xorg-only`, it can
 offer to install only missing `xserver-xorg-core`, `xinit`, and
 `xserver-xorg-input-libinput` packages. In `desktop`, it only uses the desktop
 already present. `console` is deliberately gated because it provides no
 software or GPU scaling and cannot use `--sdl12-compat`.
+
+With a blank Portable-config answer, the guided setup explains and asks for:
+
+- production watchdog versus the safer no-reboot runner;
+- SWE1, RFM, or automatic game detection;
+- Nucore versus the Pinbox fork;
+- native SDL 1.2 versus the opt-in SDL12-compat implementation (graphical
+  profiles only);
+- original FTDI/USB libraries versus the newer experimental ASIX path;
+- fullscreen/windowed output and 16/32 bpp where applicable;
+- desktop autostart/autologin only when the desktop profile was selected.
+
+Supplying a Nucore-Portable config means that file already owns the complete
+launcher/game selection, so those duplicate questions are skipped. Profile
+requirements and the explicitly confirmed video mode are still appended last.
+The installer always shows a final summary and asks once more before writing
+system configuration.
 
 You may also select a profile non-interactively (the remaining configuration
 questions are still asked):
