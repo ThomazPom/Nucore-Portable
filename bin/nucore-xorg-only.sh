@@ -32,12 +32,28 @@ administrative_stop() {
 
 maintenance_fallback() {
     [ "$OPEN_MAINTENANCE" -eq 1 ] || return 0
-    echo "[nucore-xorg-only] Nucore/Xorg exited; opening maintenance environment" >&2
-    if systemctl cat display-manager.service >/dev/null 2>&1; then
-        systemctl --no-block start graphical.target display-manager.service || true
-    else
-        systemctl --no-block start getty@tty1.service || true
-    fi
+    case "${NUCORE_MAINTENANCE:-display-manager}" in
+        display-manager)
+            echo "[nucore-xorg-only] Nucore/Xorg exited; starting display manager" >&2
+            if systemctl cat display-manager.service >/dev/null 2>&1; then
+                systemctl --no-block start graphical.target display-manager.service || true
+            else
+                echo "[nucore-xorg-only] no display manager; falling back to tty1 login" >&2
+                systemctl --no-block start getty@tty1.service || true
+            fi
+            ;;
+        getty)
+            echo "[nucore-xorg-only] Nucore/Xorg exited; starting tty1 login" >&2
+            systemctl --no-block start getty@tty1.service || true
+            ;;
+        none)
+            echo "[nucore-xorg-only] Nucore/Xorg exited; maintenance fallback disabled" >&2
+            ;;
+        *)
+            echo "[nucore-xorg-only] invalid NUCORE_MAINTENANCE; starting tty1 login" >&2
+            systemctl --no-block start getty@tty1.service || true
+            ;;
+    esac
 }
 trap maintenance_fallback EXIT
 trap administrative_stop HUP INT TERM

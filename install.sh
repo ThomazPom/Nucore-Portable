@@ -250,6 +250,24 @@ elif [ "$INSTALL_MODE" = console ]; then
     VIDEO_DESCRIPTION="fullscreen, 16 bpp (required console default)"
 fi
 
+MAINTENANCE_MODE="none"
+if [ "$INSTALL_MODE" = xorg-only ]; then
+    cat <<'EOF'
+
+AFTER NUCORE EXITS
+The display-manager choice opens GDM/SDDM/LightDM for graphical maintenance,
+which also starts the normal desktop audio session after login. The tty-login
+choice keeps the machine desktop-free and opens a text login on tty1; it is
+especially useful for cabinet diagnosis and the lightest permanent setup.
+EOF
+    read -r -p "Maintenance [display-manager/getty] (default: display-manager): " MAINTENANCE_IN
+    case "${MAINTENANCE_IN:-display-manager}" in
+        display-manager|display|desktop|dm) MAINTENANCE_MODE=display-manager ;;
+        getty|tty|console)                  MAINTENANCE_MODE=getty ;;
+        *) echo "install.sh: expected display-manager or getty" >&2; exit 2 ;;
+    esac
+fi
+
 EXTRA_FLAGS=""
 [ $USE_PINBOX -eq 1 ] && EXTRA_FLAGS="--pinbox"
 [ $USE_NO_REBOOT -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --no-reboot"
@@ -312,7 +330,7 @@ echo "  video               : $VIDEO_DESCRIPTION"
 case "$INSTALL_MODE" in
     xorg-only)
         echo "  boot path           : multi-user.target -> tty1 -> minimal Xorg -> Nucore"
-        echo "  maintenance fallback: display manager after Nucore/Xorg exits" ;;
+        echo "  maintenance fallback: $MAINTENANCE_MODE after Nucore/Xorg exits" ;;
     console)
         echo "  boot path           : multi-user.target -> tty1 -> native SDL fbcon"
         echo "  scaling             : none" ;;
@@ -396,6 +414,7 @@ StartLimitIntervalSec=60
 Type=simple
 WorkingDirectory=$SCRIPT_DIR
 Environment=TERM=linux
+Environment=NUCORE_MAINTENANCE=$MAINTENANCE_MODE
 ExecStart=$EXEC_START
 Restart=no
 StandardInput=tty-force
@@ -420,7 +439,7 @@ EOF
     echo "=== $INSTALL_MODE install complete ==="
     if [ "$INSTALL_MODE" = xorg-only ]; then
         echo "Next boot: tty1 -> minimal Xorg -> Nucore."
-        echo "If Nucore/Xorg exits, the display manager opens for maintenance."
+        echo "After Nucore/Xorg exits: $MAINTENANCE_MODE."
     else
         echo "Next boot: tty1 -> native SDL fbcon (no scaling)."
     fi

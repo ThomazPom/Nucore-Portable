@@ -68,9 +68,10 @@ and scaling without booting GNOME, KDE, a compositor, panels, or a display
 manager. Nucore is the only X client. Both bundled native SDL 1.2 and the
 opt-in SDL12-compat path use this X11 display, so normal launcher/config choices
 remain available. When Nucore or Xorg exits normally, the
-installed display manager is started for maintenance; when none exists, tty1
-gets a normal login prompt. Stopping the service, uninstalling, shutting down,
-or rebooting does not trigger that fallback.
+installer can either start the installed display manager or open a plain tty1
+login for desktop-free maintenance. When no display manager exists, the first
+choice also falls back to tty1. Stopping the service, uninstalling, shutting
+down, or rebooting does not trigger that fallback.
 
 For `xorg-only`, the installer asks for fullscreen/windowed output and Nucore's
 colour depth. The cabinet defaults are **fullscreen at 32 bpp**. These become
@@ -95,6 +96,7 @@ With a blank Portable-config answer, the guided setup explains and asks for:
   profiles only);
 - original FTDI/USB libraries versus the newer experimental ASIX path;
 - fullscreen/windowed output and 16/32 bpp where applicable;
+- graphical greeter versus a desktop-free tty1 login after Xorg-only exits;
 - desktop autostart/autologin only when the desktop profile was selected.
 
 Supplying a Nucore-Portable config means that file already owns the complete
