@@ -122,6 +122,9 @@ With a blank Portable-config answer, the guided setup explains and asks for:
   profiles only);
 - original FTDI/USB libraries versus the newer experimental ASIX path;
 - fullscreen/windowed output and 16/32 bpp where applicable;
+- optional quiet cabinet boot using the installed distro Plymouth theme, with
+  Nucore/Xorg output retained in the journal instead of appearing on tty1;
+- an optional hidden zero-second GRUB menu when a nonzero timeout is detected;
 - graphical greeter versus a desktop-free tty1 login after Xorg-only exits;
 - optional default user-service priming, including the distribution-configured
   audio stack, and the existing user that owns those services;
@@ -176,6 +179,9 @@ configuration, restores the saved default target and tty1 getty state for the
 dedicated profiles, and leaves unrelated system configuration alone. Packages
 accepted during the minimal-Xorg prompt are not automatically removed: they
 may have become dependencies of other software.
+It also removes Nucore-Portable's separate GRUB drop-in, when present, and
+regenerates GRUB without modifying the distribution's theme or the user's
+original `/etc/default/grub` settings.
 When uninstalling from a live desktop, an already active display manager keeps
 the visible VT; getty is re-enabled for future boots without stealing tty1.
 

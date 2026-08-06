@@ -110,6 +110,7 @@ EOF
 fi
 
 STATE_DIR=/var/lib/nucore-portable
+GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 if [ -f "$STATE_DIR/install-mode" ]; then
     EXISTING_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
     if [ "$EXISTING_MODE" != "$INSTALL_MODE" ]; then
@@ -303,6 +304,59 @@ EOF
     fi
 fi
 
+# Dedicated cabinet profiles can hide boot chatter without touching the
+# distribution's own /etc/default/grub or theme files. Detect the effective
+# numeric timeout from the base file plus drop-ins (later files win).
+QUIET_BOOT=0
+ZERO_GRUB_TIMEOUT=0
+GRUB_TIMEOUT_DETECTED=""
+GRUB_CAN_UPDATE=0
+SERVICE_OUTPUT=journal+console
+if [ "$INSTALL_MODE" != desktop ] && [ -f /etc/default/grub ] &&
+   command -v update-grub >/dev/null 2>&1; then
+    GRUB_CAN_UPDATE=1
+    for grub_file in /etc/default/grub /etc/default/grub.d/*.cfg; do
+        [ -f "$grub_file" ] || continue
+        [ "$grub_file" = "$GRUB_DROPIN" ] && continue
+        grub_value=$(sed -n 's/^[[:space:]]*GRUB_TIMEOUT[[:space:]]*=[[:space:]]*//p' \
+            "$grub_file" | tail -n 1)
+        [ -n "$grub_value" ] || continue
+        grub_value=${grub_value#\"}; grub_value=${grub_value%\"}
+        grub_value=${grub_value#\'}; grub_value=${grub_value%\'}
+        case "$grub_value" in
+            ''|*[!0-9]*) ;;
+            *) GRUB_TIMEOUT_DETECTED=$grub_value ;;
+        esac
+    done
+
+    cat <<'EOF'
+
+CABINET BOOT PRESENTATION
+The quiet option keeps the distribution's existing Plymouth splash (when
+installed) and sends Nucore/Xorg output only to the journal. The transition
+from Plymouth to Xorg may briefly be black, but tty1 will not show boot or
+emulator text. This is reversible and does not replace the distro theme.
+EOF
+    if ask "Hide boot and Nucore/Xorg console text?" Y; then
+        QUIET_BOOT=1
+        SERVICE_OUTPUT=journal
+    fi
+
+    case "$GRUB_TIMEOUT_DETECTED" in
+        ''|0) ;;
+        *)
+            cat <<EOF
+
+GRUB currently waits ${GRUB_TIMEOUT_DETECTED}s. A zero-second hidden menu boots
+the cabinet immediately. Firmware-dependent recovery remains available by
+holding Shift or tapping Escape during early boot.
+EOF
+            ask "Hide the GRUB menu and set its timeout to zero?" Y && \
+                ZERO_GRUB_TIMEOUT=1
+            ;;
+    esac
+fi
+
 EXTRA_FLAGS=""
 [ $USE_PINBOX -eq 1 ] && EXTRA_FLAGS="--pinbox"
 [ $USE_NO_REBOOT -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --no-reboot"
@@ -362,6 +416,14 @@ else
 fi
 echo "  autostart on login  : $DO_AUTOSTART"
 echo "  video               : $VIDEO_DESCRIPTION"
+if [ "$INSTALL_MODE" != desktop ]; then
+    echo "  boot console        : $([ "$QUIET_BOOT" -eq 1 ] && echo 'quiet/splash, journal only' || echo 'normal text output')"
+    if [ "$GRUB_CAN_UPDATE" -eq 1 ]; then
+        echo "  GRUB timeout        : $([ "$ZERO_GRUB_TIMEOUT" -eq 1 ] && echo 'hidden, 0 seconds' || echo "unchanged${GRUB_TIMEOUT_DETECTED:+ ($GRUB_TIMEOUT_DETECTED seconds detected)}")"
+    else
+        echo "  GRUB configuration  : unsupported or unavailable; unchanged"
+    fi
+fi
 [ -n "$USER_SESSION_NAME" ] && \
     echo "  default user services: $USER_SESSION_NAME (no login, no desktop)"
 case "$INSTALL_MODE" in
@@ -429,6 +491,53 @@ if [ "$INSTALL_MODE" != desktop ]; then
     fi
     printf '%s\n' "$INSTALL_MODE" > "$STATE_DIR/install-mode"
 
+    GRUB_DROPIN_CHANGED=0
+    if [ "$QUIET_BOOT" -eq 1 ] || [ "$ZERO_GRUB_TIMEOUT" -eq 1 ]; then
+        install -d -m 0755 /etc/default/grub.d
+        if [ -e "$GRUB_DROPIN" ] &&
+           ! grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
+            echo "install.sh: refusing unrelated existing $GRUB_DROPIN" >&2
+            exit 3
+        fi
+        {
+            echo '# nucore-portable managed boot presentation'
+            if [ "$QUIET_BOOT" -eq 1 ]; then
+                cat <<'EOF'
+for nucore_boot_arg in quiet loglevel=3 systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0; do
+    case " $GRUB_CMDLINE_LINUX_DEFAULT " in
+        *" $nucore_boot_arg "*) ;;
+        *) GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT $nucore_boot_arg" ;;
+    esac
+done
+if command -v plymouth >/dev/null 2>&1; then
+    case " $GRUB_CMDLINE_LINUX_DEFAULT " in
+        *' splash '*) ;;
+        *) GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT splash" ;;
+    esac
+fi
+unset nucore_boot_arg
+EOF
+            fi
+            if [ "$ZERO_GRUB_TIMEOUT" -eq 1 ]; then
+                cat <<'EOF'
+GRUB_TIMEOUT_STYLE=hidden
+GRUB_TIMEOUT=0
+GRUB_RECORDFAIL_TIMEOUT=0
+EOF
+            fi
+        } > "$GRUB_DROPIN"
+        chmod 0644 "$GRUB_DROPIN"
+        GRUB_DROPIN_CHANGED=1
+    elif [ -f "$GRUB_DROPIN" ] &&
+         grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
+        rm -f "$GRUB_DROPIN"
+        GRUB_DROPIN_CHANGED=1
+    fi
+    if [ "$GRUB_DROPIN_CHANGED" -eq 1 ]; then
+        echo "[+] regenerating GRUB configuration"
+        update-grub
+    fi
+
     if [ "$INSTALL_MODE" = xorg-only ]; then
         DESCRIPTION="minimal Xorg cabinet"
         EXEC_START="$XORG_WRAPPER $SERVICE_ARGS"
@@ -468,8 +577,8 @@ $USER_EXEC_PRE
 ExecStart=$EXEC_START
 Restart=no
 StandardInput=tty-force
-StandardOutput=journal+console
-StandardError=journal+console
+StandardOutput=$SERVICE_OUTPUT
+StandardError=$SERVICE_OUTPUT
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes

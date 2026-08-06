@@ -27,6 +27,7 @@ fi
 
 echo "[+] stopping & disabling nucore.service"
 STATE_DIR=/var/lib/nucore-portable
+GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 systemctl stop nucore.service    2>/dev/null || true
@@ -34,6 +35,17 @@ systemctl disable nucore.service 2>/dev/null || true
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
 systemctl daemon-reload
+
+if [ -f "$GRUB_DROPIN" ] &&
+   grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
+    echo "[+] restoring GRUB boot presentation"
+    rm -f "$GRUB_DROPIN"
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub
+    else
+        echo "    update-grub unavailable; regenerate GRUB configuration manually" >&2
+    fi
+fi
 
 if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = console ]; then
     echo "[+] restoring boot target and tty1 getty"
