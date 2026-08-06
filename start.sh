@@ -2,6 +2,7 @@
 # start.sh — quick test launcher for nucore-portable.
 #
 # Usage: ./start.sh [--no-reboot] [--pinbox] [--asix] [--sdl12-compat]
+#                   [--console]
 #                   [--no-shim] [--no-audio-shim] [--no-sigio-shim]
 #                   [--config FILE]
 #                   [--] [game] [extra args...]
@@ -26,6 +27,9 @@
 #   --sdl12-compat
 #                 EXPERIMENTAL: translate the SDL 1.2 ABI to bundled SDL 2.
 #                 The proven native SDL 1.2 path remains the default.
+#   --console     ADVANCED: allow native SDL 1.2 to open tty/fbcon directly.
+#                 Refuses graphical sessions and cannot be combined with
+#                 --sdl12-compat. Dedicated 640x480-capable displays only.
 #   --no-shim     EXPERIMENTAL: do not preload sigio_fix.so. Safe only for
 #                 testing; the real cabinet RTC/SIGIO path is unverified.
 #   --no-audio-shim
@@ -135,6 +139,7 @@ NO_REBOOT=0
 PINBOX=0
 ASIX=0
 SDL12_COMPAT=0
+ALLOW_CONSOLE=0
 USE_SHIM=1
 SHIM_AUDIO=1
 SHIM_SIGIO=1
@@ -147,6 +152,7 @@ while [ $# -gt 0 ]; do
         --pinbox)      PINBOX=1;      shift ;;
         --asix)        ASIX=1;        shift ;;
         --sdl12-compat) SDL12_COMPAT=1; shift ;;
+        --console)     ALLOW_CONSOLE=1; shift ;;
         --no-shim)     USE_SHIM=0;    shift ;;
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
         --no-sigio-shim) SHIM_SIGIO=0; shift ;;
@@ -164,6 +170,11 @@ while [ $# -gt 0 ]; do
         *)             break ;;
     esac
 done
+
+if [ "$ALLOW_CONSOLE" -eq 1 ] && [ "$SDL12_COMPAT" -eq 1 ]; then
+    echo "start.sh: --console supports native SDL 1.2 only; remove --sdl12-compat" >&2
+    exit 2
+fi
 
 # These overlays are orthogonal. Native SDL 1.2 remains the default and the
 # compatibility library is selected only when explicitly requested.
@@ -242,6 +253,7 @@ have_caps() {
 }
 
 BUNDLE_OPTIONS=()
+[ "$ALLOW_CONSOLE" -eq 1 ] && BUNDLE_OPTIONS+=(--console)
 [ "$USE_SHIM" -eq 0 ] && BUNDLE_OPTIONS+=(--no-shim)
 [ "$SHIM_AUDIO" = 0 ] && BUNDLE_OPTIONS+=(--no-audio-shim)
 [ "$SHIM_SIGIO" = 0 ] && BUNDLE_OPTIONS+=(--no-sigio-shim)

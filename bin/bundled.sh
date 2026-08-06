@@ -4,7 +4,7 @@
 # Wraps the target binary in a self-contained i386 runtime (../bundlex86)
 # so the host needs no `dpkg --add-architecture i386` or system 32-bit libs.
 #
-# Usage: bundled.sh [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
+# Usage: bundled.sh [--console] [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
 #   portable          — native SDL 1.2 + sigio_fix (default)
 #   asix              — experimental ASIX libftchipid 0.1.0 overlay
 #   sdl12-compat      — experimental SDL 1.2 ABI on bundled SDL 2
@@ -56,14 +56,49 @@ fi
 USE_SHIM=1
 SHIM_AUDIO=1
 SHIM_SIGIO=1
+ALLOW_CONSOLE=0
 while :; do
     case "$1" in
+        --console)       ALLOW_CONSOLE=1; shift ;;
         --no-shim)       USE_SHIM=0; shift ;;
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
         --no-sigio-shim) SHIM_SIGIO=0; shift ;;
         *) break ;;
     esac
 done
+
+console_refusal() {
+    echo "bundled.sh: refusing direct console rendering: $1" >&2
+    echo "Stop the display manager and every X11/Wayland session first." >&2
+    exit 6
+}
+
+if [ "$ALLOW_CONSOLE" -eq 1 ]; then
+    if command -v systemctl >/dev/null 2>&1 &&
+       systemctl is-active --quiet display-manager.service 2>/dev/null; then
+        console_refusal "display-manager.service is active"
+    fi
+    if command -v loginctl >/dev/null 2>&1 &&
+       loginctl list-sessions --no-legend 2>/dev/null |
+           while read -r sid _rest; do
+               loginctl show-session "$sid" -p Type --value 2>/dev/null
+           done | grep -Eq '^(x11|wayland|mir)$'; then
+        console_refusal "a graphical logind session is active"
+    fi
+    if [ -d /tmp/.X11-unix ] &&
+       find /tmp/.X11-unix -maxdepth 1 -type s -name 'X*' -print -quit 2>/dev/null | grep -q .; then
+        console_refusal "an X server socket is present"
+    fi
+    export SDL_VIDEODRIVER=fbcon
+    echo "*** DIRECT CONSOLE MODE: no scaling is provided ***" >&2
+else
+    if [ -z "${DISPLAY:-}" ]; then
+        echo "bundled.sh: DISPLAY is not set; run from an X11 session." >&2
+        echo "For intentional native fbcon output, use the gated --console mode." >&2
+        exit 6
+    fi
+    export SDL_VIDEODRIVER=x11
+fi
 
 case "$1" in
     portable|asix|sdl12-compat|sdl12-compat-asix) MODE="$1"; shift ;;
@@ -75,7 +110,7 @@ BINARY="$1"; [ "$#" -gt 0 ] && shift
 
 if [ -z "$RUNNER" ] || [ -z "$BINARY" ]; then
     cat >&2 <<EOF
-Usage: $0 [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
+Usage: $0 [--console] [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
   portable          — native SDL 1.2 + sigio_fix (default)
   asix              — experimental ASIX libftchipid 0.1.0 overlay
   sdl12-compat      — experimental SDL 1.2 ABI on SDL 2

@@ -1,9 +1,9 @@
 #!/bin/bash
 # uninstall.sh — reverse install.sh.
 #
-# Symmetric with install.sh: remove its systemd unit, polkit rule and
-# sentinel-fenced/drop-in display-manager autologin settings. install.sh does
-# not touch getty, sleep targets, the default target or notification daemons.
+# Symmetric with install.sh: remove its service and restore the exact boot
+# target/getty state used before xorg-only or console installation. Desktop
+# autologin changes are removed separately below.
 #
 # bin/nucore-as-root.sh stays in the bundle (it ships with the source
 # tree, not installed under /).
@@ -26,11 +26,32 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "[+] stopping & disabling nucore.service"
+STATE_DIR=/var/lib/nucore-portable
+INSTALL_MODE=""
+[ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 systemctl stop nucore.service    2>/dev/null || true
 systemctl disable nucore.service 2>/dev/null || true
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
 systemctl daemon-reload
+
+if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = console ]; then
+    echo "[+] restoring boot target and tty1 getty"
+    # Also repairs installations made by the older console experiment, which
+    # masked rather than disabled getty@tty1.
+    systemctl unmask getty@tty1.service 2>/dev/null || true
+    if [ -f "$STATE_DIR/getty-tty1-was-enabled" ] &&
+       grep -Eq '^(enabled|enabled-runtime|alias|static)$' "$STATE_DIR/getty-tty1-was-enabled"; then
+        systemctl enable getty@tty1.service 2>/dev/null || true
+    fi
+    if [ -s "$STATE_DIR/previous-default-target" ]; then
+        PREVIOUS_TARGET=$(sed -n '1p' "$STATE_DIR/previous-default-target")
+        case "$PREVIOUS_TARGET" in
+            *.target) systemctl set-default "$PREVIOUS_TARGET" ;;
+            *) echo "    invalid saved target '$PREVIOUS_TARGET'; leaving current target unchanged" >&2 ;;
+        esac
+    fi
+fi
 
 echo "[+] removing display-manager autologin (GDM / SDDM / LightDM)"
 strip_block() {
@@ -57,6 +78,11 @@ rm -f /etc/lightdm/lightdm.conf.d/49-nucore.conf
 # rmdir if we created the dir and it's now empty (harmless if it isn't).
 rmdir /etc/sddm.conf.d 2>/dev/null || true
 rmdir /etc/lightdm/lightdm.conf.d 2>/dev/null || true
+
+rm -f "$STATE_DIR/install-mode" \
+      "$STATE_DIR/previous-default-target" \
+      "$STATE_DIR/getty-tty1-was-enabled"
+rmdir "$STATE_DIR" 2>/dev/null || true
 
 echo "=== uninstall complete ==="
 echo "All project-owned system changes made by install.sh were removed."

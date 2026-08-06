@@ -1,54 +1,51 @@
 #!/bin/bash
-# install.sh — scoped, reversible cabinet integration for nucore-portable.
+# install.sh — scoped, reversible cabinet integration for Nucore-Portable.
 #
-# What this DOES:
-#   • installs /etc/systemd/system/nucore.service (root, WantedBy=graphical.target)
-#   • the unit launches bin/nucore-as-root.sh which polls logind for the
-#     active local graphical session and execs start.sh with the right
-#     DISPLAY / XAUTHORITY / XDG_RUNTIME_DIR — so nucore renders inside
-#     your normal GNOME/KDE/whatever session as root, no auth prompt.
+# Profiles:
+#   xorg-only (recommended)  minimal Xorg and Nucore on tty1; no desktop
+#   desktop                  attach Nucore to an existing graphical session
+#   console                  native SDL fbcon, no scaler (advanced/legacy)
 #
-# What this DOES NOT do (deliberately — kept your desktop intact):
-#   ✗ does not disable GDM / lightdm / sddm
-#   ✗ does not change the default systemd target
-#   ✗ does not disable getty@tty1 or fight it for the console
-#   ✗ does not mask sleep / suspend / hibernate / blank
-#   ✗ does not mask unattended-upgrades / packagekit / notifications
-#   ✗ does not install or pull in any apt packages
-#
-# Boot flow on a normal GNOME box after this install:
-#   1. systemd boots normally → graphical.target activates → GDM shows up
-#   2. nucore.service starts (pulled in by graphical.target) and waits in
-#      its polling loop for an active local graphical session
-#   3. you log in as your normal user → wrapper sees the active session,
-#      grabs DISPLAY+XAUTHORITY, execs start.sh as root → nucore appears
-#      fullscreen on your desktop
-#   4. press F1 / Esc → nucore exits → service exits cleanly (Restart=no)
-#      → you are back at your GNOME desktop
-#   5. to relaunch from your desktop terminal, no auth needed:
-#         systemctl start nucore
-#      (systemctl reads our unit, kicks the wrapper again)
-#
-# If you don't want autostart at all, just answer N to the autostart
-# prompt — start.sh still works as a manual launcher with run0/sudo/pkexec
-# for the privilege step.
-#
-# Reverse with: ./uninstall.sh
+# The installer never installs a desktop environment.  Xorg-only may offer to
+# install just Xorg, xinit and the libinput Xorg driver when they are missing.
+# Reverse project-owned changes with ./uninstall.sh.
 
 set -e
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
+INSTALL_MODE=""
+INSTALL_MODE_ARG=""
+case "${1:-}" in
+    --xorg-only) INSTALL_MODE=xorg-only; INSTALL_MODE_ARG=--xorg-only; shift ;;
+    --desktop)   INSTALL_MODE=desktop;   INSTALL_MODE_ARG=--desktop; shift ;;
+    --console)   INSTALL_MODE=console;   INSTALL_MODE_ARG=--console; shift ;;
+    -h|--help)
+        cat <<EOF
+Usage: $0 [--xorg-only|--desktop|--console]
+
+  --xorg-only  dedicated cabinet: minimal Xorg + Nucore (recommended)
+  --desktop    launch in an existing GNOME/KDE/etc. session
+  --console    direct SDL fbcon, no scaling (advanced/legacy)
+EOF
+        exit 0 ;;
+    "") ;;
+    *) echo "install.sh: unknown option '$1'" >&2; exit 2 ;;
+esac
+[ "$#" -eq 0 ] || { echo "install.sh: unexpected arguments: $*" >&2; exit 2; }
+
 # Self-elevate: run0 (Debian 13) → sudo → pkexec.
 if [ "$EUID" -ne 0 ]; then
+    REEXEC_ARGS=()
+    [ -n "$INSTALL_MODE_ARG" ] && REEXEC_ARGS+=("$INSTALL_MODE_ARG")
     for esc in run0 sudo pkexec; do
         if command -v "$esc" >/dev/null 2>&1; then
             echo "[install.sh] re-launching under $esc to gain root..."
             case "$esc" in
-                run0)   exec run0 --description="nucore-portable installer" -- "$0" "$@" ;;
-                sudo)   exec sudo "$0" "$@" ;;
-                pkexec) exec pkexec "$0" "$@" ;;
+                run0)   exec run0 --description="nucore-portable installer" -- "$0" "${REEXEC_ARGS[@]}" ;;
+                sudo)   exec sudo "$0" "${REEXEC_ARGS[@]}" ;;
+                pkexec) exec pkexec "$0" "${REEXEC_ARGS[@]}" ;;
             esac
         fi
     done
@@ -67,9 +64,61 @@ ask() {
     fi
 }
 
+case "$SCRIPT_DIR/" in
+    /tmp/*)
+        cat >&2 <<EOF
+
+WARNING: this checkout is below /tmp:
+  $SCRIPT_DIR
+
+The installer does not copy the bundle. The service points to this exact
+directory, which may disappear at reboot.
+EOF
+        ask "Continue installing from volatile /tmp anyway?" N || exit 2
+        ;;
+esac
+
+if [ -z "$INSTALL_MODE" ]; then
+    cat <<EOF
+Installation profile:
+  1. xorg-only  minimal Xorg + Nucore, dedicated cabinet (recommended)
+  2. desktop    use an existing graphical desktop
+  3. console    direct fbcon, native SDL only, no scaling (advanced)
+EOF
+    read -r -p "Profile [1]: " MODE_IN
+    case "${MODE_IN:-1}" in
+        1|xorg-only|xorg|cabinet) INSTALL_MODE=xorg-only ;;
+        2|desktop|graphical)      INSTALL_MODE=desktop ;;
+        3|console|fbcon)          INSTALL_MODE=console ;;
+        *) echo "install.sh: expected 1, 2 or 3" >&2; exit 2 ;;
+    esac
+fi
+
+if [ "$INSTALL_MODE" = console ]; then
+    cat <<'EOF'
+
+DIRECT CONSOLE MODE IS ADVANCED AND PROVIDES NO SCALING.
+Use it only with a display path already proven to present 640x480 correctly
+(for example an arcade CRT, ArcadeVGA, or a monitor with its own scaler).
+SDL12-compat is not supported in this profile.
+EOF
+    read -r -p "Type DIRECT CONSOLE to continue: " CONSOLE_ACK
+    [ "$CONSOLE_ACK" = "DIRECT CONSOLE" ] || { echo "Console install aborted."; exit 2; }
+fi
+
+STATE_DIR=/var/lib/nucore-portable
+if [ -f "$STATE_DIR/install-mode" ]; then
+    EXISTING_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
+    if [ "$EXISTING_MODE" != "$INSTALL_MODE" ]; then
+        echo "install.sh: '$EXISTING_MODE' is already installed." >&2
+        echo "Run ./uninstall.sh before switching to '$INSTALL_MODE'." >&2
+        exit 2
+    fi
+fi
+
 echo "=== nucore-portable install ==="
 echo "Bundle root  : $SCRIPT_DIR"
-echo "Mode         : in-session (scoped systemd/polkit/autologin changes)"
+echo "Profile      : $INSTALL_MODE"
 echo
 
 PORTABLE_CONFIG=""
@@ -115,7 +164,9 @@ CONFIG_FLAG=""
 [ -n "$PORTABLE_CONFIG" ] && CONFIG_FLAG="--config=$PORTABLE_CONFIG"
 
 DO_AUTOSTART=1
-ask "Auto-launch on graphical login (recommended)?" Y || DO_AUTOSTART=0
+if [ "$INSTALL_MODE" = desktop ]; then
+    ask "Auto-launch on graphical login?" Y || DO_AUTOSTART=0
+fi
 
 # Autologin: pick the user GDM should log in automatically on boot.
 # Without this the user sits at the GDM password prompt forever before
@@ -137,7 +188,8 @@ if [ -z "$DEFAULT_AUTOLOGIN_USER" ] || [ "$DEFAULT_AUTOLOGIN_USER" = "root" ]; t
         | awk -F: '$3>=1000 && $3<65534 && $7 !~ /(nologin|false)$/ {print $1; exit}')
 fi
 
-if ask "Enable display-manager autologin (GDM/SDDM/LightDM) so the box boots straight in?" Y; then
+if [ "$INSTALL_MODE" = desktop ] &&
+   ask "Enable display-manager autologin (GDM/SDDM/LightDM) so the box boots straight in?" Y; then
     DO_AUTOLOGIN=1
     read -r -p "Auto-login user [default: $DEFAULT_AUTOLOGIN_USER]: " AUTOLOGIN_IN
     AUTOLOGIN_USER="${AUTOLOGIN_IN:-$DEFAULT_AUTOLOGIN_USER}"
@@ -157,13 +209,23 @@ else
     echo "  emulator            : $([ $USE_PINBOX -eq 1 ] && echo pinbox || echo nucore)"
 fi
 echo "  autostart on login  : $DO_AUTOSTART"
-echo "  display-manager autologin : $([ $DO_AUTOLOGIN -eq 1 ] && echo "yes ($AUTOLOGIN_USER)" || echo no)"
+case "$INSTALL_MODE" in
+    xorg-only)
+        echo "  boot path           : multi-user.target -> tty1 -> minimal Xorg -> Nucore"
+        echo "  maintenance fallback: display manager after Nucore/Xorg exits" ;;
+    console)
+        echo "  boot path           : multi-user.target -> tty1 -> native SDL fbcon"
+        echo "  scaling             : none" ;;
+    desktop)
+        echo "  display-manager autologin : $([ $DO_AUTOLOGIN -eq 1 ] && echo "yes ($AUTOLOGIN_USER)" || echo no)" ;;
+esac
 echo "  install path        : $SCRIPT_DIR (run from where it lives — no copy)"
 echo
 ask "Proceed?" Y || { echo "aborted."; exit 0; }
 
 WRAPPER="$SCRIPT_DIR/bin/nucore-as-root.sh"
-chmod 0755 "$WRAPPER" "$SCRIPT_DIR/start.sh"
+XORG_WRAPPER="$SCRIPT_DIR/bin/nucore-xorg-only.sh"
+chmod 0755 "$WRAPPER" "$XORG_WRAPPER" "$SCRIPT_DIR/start.sh" "$SCRIPT_DIR/bin/bundled.sh"
 
 # pinbox reads its sound bank from roms/<game>_pinbox.bin, but the bundle
 # only ships roms/<game>_nucore.bin. Mirror them so pinbox can boot
@@ -181,6 +243,94 @@ if [ -n "$PORTABLE_CONFIG" ]; then
 else
     SERVICE_ARGS="$EXTRA_FLAGS $DEFAULT_GAME"
 fi
+
+if [ "$INSTALL_MODE" != desktop ]; then
+    if [ "$INSTALL_MODE" = xorg-only ]; then
+        MISSING_XORG=()
+        command -v Xorg >/dev/null 2>&1 || MISSING_XORG+=(xserver-xorg-core)
+        command -v xinit >/dev/null 2>&1 || MISSING_XORG+=(xinit)
+        [ -e /usr/lib/xorg/modules/input/libinput_drv.so ] || \
+            MISSING_XORG+=(xserver-xorg-input-libinput)
+        if [ "${#MISSING_XORG[@]}" -gt 0 ]; then
+            echo "Minimal Xorg packages required: ${MISSING_XORG[*]}"
+            ask "Install the minimal Xorg runtime now?" Y || exit 2
+            command -v apt-get >/dev/null 2>&1 || {
+                echo "install.sh: apt-get unavailable; install Xorg and xinit manually" >&2
+                exit 3
+            }
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                "${MISSING_XORG[@]}"
+        fi
+    fi
+
+    install -d -m 0755 "$STATE_DIR"
+    if [ ! -f "$STATE_DIR/previous-default-target" ]; then
+        systemctl get-default > "$STATE_DIR/previous-default-target"
+    fi
+    if [ ! -f "$STATE_DIR/getty-tty1-was-enabled" ]; then
+        systemctl is-enabled getty@tty1.service > "$STATE_DIR/getty-tty1-was-enabled" 2>/dev/null || true
+    fi
+    printf '%s\n' "$INSTALL_MODE" > "$STATE_DIR/install-mode"
+
+    if [ "$INSTALL_MODE" = xorg-only ]; then
+        DESCRIPTION="minimal Xorg cabinet"
+        EXEC_START="$XORG_WRAPPER $SERVICE_ARGS"
+    else
+        DESCRIPTION="direct fbcon cabinet (advanced)"
+        EXEC_START="$SCRIPT_DIR/start.sh --console --no-root --no-inhibit $SERVICE_ARGS -fullscreen -bpp 16"
+    fi
+
+    echo "[+] writing $INSTALL_MODE $UNIT"
+    cat > "$UNIT" <<EOF
+[Unit]
+Description=Pinball 2000 (nucore-portable, $DESCRIPTION)
+Documentation=file:$SCRIPT_DIR/README.md
+After=systemd-user-sessions.service getty-pre.target sound.target
+Before=getty.target
+Conflicts=display-manager.service getty@tty1.service
+ConditionPathExists=/dev/tty0
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+WorkingDirectory=$SCRIPT_DIR
+Environment=TERM=linux
+ExecStart=$EXEC_START
+Restart=no
+StandardInput=tty-force
+StandardOutput=journal+console
+StandardError=journal+console
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+UtmpIdentifier=tty1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl disable getty@tty1.service 2>/dev/null || true
+    systemctl enable nucore.service
+    systemctl set-default multi-user.target
+
+    echo
+    echo "=== $INSTALL_MODE install complete ==="
+    if [ "$INSTALL_MODE" = xorg-only ]; then
+        echo "Next boot: tty1 -> minimal Xorg -> Nucore."
+        echo "If Nucore/Xorg exits, the display manager opens for maintenance."
+    else
+        echo "Next boot: tty1 -> native SDL fbcon (no scaling)."
+    fi
+    echo "Watch logs: journalctl -u nucore -f"
+    echo "Reverse: $SCRIPT_DIR/uninstall.sh"
+    exit 0
+fi
+
+install -d -m 0755 "$STATE_DIR"
+printf '%s\n' desktop > "$STATE_DIR/install-mode"
 echo "[+] writing $UNIT"
 cat > "$UNIT" <<EOF
 [Unit]
@@ -189,6 +339,8 @@ Description=Pinball 2000 (nucore-portable, in-session as root)
 # its polling loop until a real user logs in and an active session exists.
 After=graphical.target
 Wants=graphical.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
@@ -202,9 +354,6 @@ ExecStart=$WRAPPER $SERVICE_ARGS
 # from the active session — systemd-logind allows it via polkit defaults).
 Restart=on-failure
 RestartSec=5
-# Hard fuse so a broken unit cannot turn into an infinite restart loop.
-StartLimitBurst=3
-StartLimitIntervalSec=60
 StandardOutput=journal
 StandardError=journal
 

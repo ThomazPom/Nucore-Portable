@@ -49,124 +49,78 @@ watchdog, which may hard-reboot a cabinet PC after a stall.
 
 ## When the test works: optional cabinet integration
 
-You can stop with the commands above and launch Nucore manually forever.
-`install.sh` is only for owners who want the machine to behave like a cabinet:
-automatic login, automatic Nucore startup, and a clean return to the desktop
-with F1 or Esc.
-
-The installer makes real system changes, listed below. They are deliberately
-scoped and reversible, but this is not a zero-touch operation. Read the list,
-then run:
+You can keep launching manually. For an appliance-like boot, run:
 
 ```sh
 ./install.sh
 ```
 
-(`install.sh` re-launches itself under `run0` / `sudo` / `pkexec`
-automatically — no need to be in the sudoers file on Debian 13.)
+The installer asks for one of three profiles:
 
-It does not disable GDM/SDDM/LightDM, change the default systemd target, touch
-`getty@tty1`, mask sleep/suspend/hibernate or notification daemons, or install
-APT packages. It does add a system service and polkit rule, and can configure
-display-manager autologin. `./uninstall.sh` reverses those project-owned
-changes.
+| Profile | Boot path | Scaling | Intended use |
+|---|---|---|---|
+| **xorg-only** (default) | tty1 → minimal Xorg → Nucore | Xorg/GPU display path | Dedicated cabinet; recommended |
+| **desktop** | existing GDM/SDDM/LightDM + desktop → Nucore | Desktop display path | Convenient testing or a dual-purpose PC |
+| **console** | tty1 → native SDL 1.2 fbcon | None | Advanced: real 640×480/CRT/ArcadeVGA-style output |
 
-The installer does not copy the bundle into a system directory: the service
-points back to this live clone. Keep the directory in place. To move it later,
-run `./uninstall.sh`, move the clone, then run `./install.sh` again.
+`xorg-only` is the useful middle ground: it keeps Xorg's mature mode-setting
+and scaling without booting GNOME, KDE, a compositor, panels, or a display
+manager. Nucore is the only X client. Both bundled native SDL 1.2 and the
+opt-in SDL12-compat path use this X11 display, so normal launcher/config choices
+remain available. When Nucore or Xorg exits normally, the
+installed display manager is started for maintenance; when none exists, tty1
+gets a normal login prompt. Stopping the service, uninstalling, shutting down,
+or rebooting does not trigger that fallback.
 
-Paul's cabinet video is also an excellent example of Linux tuned as a dedicated
-appliance: the boot is unusually fast and the transition into Nucore is nearly
-seamless. The installer provides the service, autologin and graphical-session
-handoff described here. Total boot time still depends on the PC firmware,
-storage, desktop and services enabled on that particular machine; it does not
-silently apply every operating-system optimization demonstrated in the video.
+The installer never installs a desktop environment. In `xorg-only`, it can
+offer to install only missing `xserver-xorg-core`, `xinit`, and
+`xserver-xorg-input-libinput` packages. In `desktop`, it only uses the desktop
+already present. `console` is deliberately gated because it provides no
+software or GPU scaling and cannot use `--sdl12-compat`.
 
-### What gets written
-
-| Path | Purpose |
-|---|---|
-| `/etc/systemd/system/nucore.service` | root-owned unit, `WantedBy=graphical.target`, runs `bin/nucore-as-root.sh` |
-| `/etc/polkit-1/rules.d/49-nucore.rules` | scoped to `nucore.service` only — lets the active local-session user `systemctl start nucore` without password |
-| `/etc/gdm3/daemon.conf` *(if GDM installed)* | sentinel-fenced `[daemon] AutomaticLogin=…` block; `.nucore-bak` backup created |
-| `/etc/gdm/custom.conf` *(if Fedora/Arch GDM installed)* | same as above |
-| `/etc/sddm.conf.d/49-nucore.conf` | drop-in `[Autologin] User=…` for SDDM (Kubuntu, KDE neon, openSUSE-Plasma, Manjaro-KDE) |
-| `/etc/lightdm/lightdm.conf.d/49-nucore.conf` | drop-in `[Seat:*] autologin-user=…` for LightDM (Lubuntu, Xubuntu, Mint XFCE/Cinnamon) |
-
-Polkit, GDM, SDDM and LightDM are all configured via files only — no
-new packages get installed. The SDDM and LightDM drop-ins are written
-**unconditionally**, so if you later `apt install kubuntu-desktop`
-(pulling in SDDM) the autologin keeps working with no second `install.sh`
-run. GDM is the one exception (its config dirs are package-owned), so
-re-run `./install.sh` if you switch to a GNOME desktop later.
-
-### Interactive prompts
-
-You'll be asked, one by one:
-
-* optional Nucore-Portable command-line config
-* if blank: default game (`swe1_14` / `rfm_15` / `auto`) and whether to boot
-  the Pinbox fork
-* auto-launch on graphical login (default yes)
-* enable display-manager autologin (default yes), and which user
-
-`install.sh` defaults the autologin user to whoever invoked it
-(detected via `$SUDO_UID` / `$PKEXEC_UID` / `logname` — i.e. you).
-
-### Boot flow after install
-
-1. The box boots normally → display manager (GDM/SDDM/LightDM) appears
-   exactly as before, then **autologins straight to your desktop**.
-2. `nucore.service` starts in parallel and waits for **two** signals
-   before doing anything visible:
-    * an active local user session (`Class=user`, `uid >= 1000`) — so
-      it never attaches to the greeter session by mistake;
-    * your `--user` `graphical-session.target` is `active` — i.e. your
-      gnome-shell / KWin / XFCE session has finished its own startup
-      (panel painted, autostart apps launched). This is the canonical
-      "desktop is fully up" signal on every modern systemd desktop.
-3. Wrapper harvests the session env (`DISPLAY`, `WAYLAND_DISPLAY`,
-   `XAUTHORITY`, **`DBUS_SESSION_BUS_ADDRESS`**, `XDG_SESSION_ID`,
-   `XDG_SESSION_TYPE`, `XDG_RUNTIME_DIR`) directly from
-   `systemctl --user show-environment`.
-4. `systemd-run --scope --slice=user-<uid>.slice --uid=0` launches the
-   emulator **inside your user's own slice**. From the compositor's
-   point of view nucore is a regular session app (just one that happens
-   to be euid=0); it gets keyboard focus, plays nicely with screen
-   savers, and exits clean to your desktop on `Esc` / F1.
-5. A 3-second-deferred background helper calls
-   `org.gnome.Shell.OverviewActive=false` (GNOME) or
-   `org.kde.KWin.Effect.Overview1.deactivate` (KDE) over D-Bus, so
-   freshly-autologged-in sessions don't leave nucore behind the
-   Activities/Overview launcher.
-6. `Esc` / F1 → nucore exits → the transient scope vanishes → the unit
-   exits → you are back at your normal desktop. The unit only restarts
-   on **failure** (`Restart=on-failure` with a 3-burst limit), never
-   on a clean exit, so you can put the desktop on top intentionally.
-
-### Manual control after install
+You may also select a profile non-interactively (the remaining configuration
+questions are still asked):
 
 ```sh
-systemctl start nucore          # start without rebooting (no auth prompt)
-journalctl -u nucore -f         # follow logs
-systemctl disable nucore        # stop autostarting at login
-systemctl stop nucore           # close it from outside
+./install.sh --xorg-only
+./install.sh --desktop
+./install.sh --console
 ```
 
-### Reverse everything
+Do not install from `/tmp`: the service points to the checkout in place and a
+temporary checkout can disappear at reboot. The installer warns and requires
+confirmation if it detects this. To move a permanent checkout, uninstall,
+move it, then reinstall.
+
+### What changes
+
+All profiles write `/etc/systemd/system/nucore.service` and record their mode
+under `/var/lib/nucore-portable/`. `xorg-only` and `console` select
+`multi-user.target`, reserve tty1 from getty, and remember the previous default
+target and getty state. `desktop` keeps the graphical boot and can configure
+autologin plus a narrowly scoped polkit rule. The desktop profile supports
+GDM, SDDM, and LightDM; the dedicated profile is independent of which display
+manager is installed because it starts it only after the game exits.
+
+Paul's cabinet video is an excellent example of broader Linux appliance
+tuning: its boot is unusually fast and the handoff into Nucore is nearly
+seamless. This installer owns the Nucore launch path, not every firmware,
+storage, kernel, and service optimization demonstrated there.
+
+### Control and removal
 
 ```sh
+systemctl start nucore
+journalctl -u nucore -f
+systemctl stop nucore
 ./uninstall.sh
 ```
 
-`uninstall.sh` is symmetric: stops the unit, removes the unit + the
-polkit rule, strips the sentinel-fenced GDM block(s), deletes the
-SDDM/LightDM drop-ins, `daemon-reload`s. Since `install.sh` never
-touched GDM/SDDM/LightDM beyond its own block, never disabled the
-display manager, never touched `getty` / sleep / notifications, and
-never installed any packages, there is nothing else to restore. It deliberately
-retains the `.nucore-bak` safety copies because it cannot prove that a backup
-with that name did not predate the installer.
+`uninstall.sh` removes project-owned service, polkit, and display-manager
+configuration, restores the saved default target and tty1 getty state for the
+dedicated profiles, and leaves unrelated system configuration alone. Packages
+accepted during the minimal-Xorg prompt are not automatically removed: they
+may have become dependencies of other software.
 
 ## Cabinet I/O and compatibility experiments
 
@@ -326,6 +280,7 @@ Examples:
 | `--pinbox` | off | Run the Pinbox fork instead of Nucore |
 | `--asix` | off | **Experimental:** select the newer ASIX `libftchipid` path that uses `libstdc++.so.6` instead of the original `.so.5` |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
+| `--console` | off | **Advanced:** native SDL 1.2 fbcon output with no scaling; refuses active graphical sessions |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
 | `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
@@ -833,9 +788,10 @@ runtime variables are explicitly forwarded so the elevated emulator remains
 inside the current graphical session. `systemd-inhibit` prevents locking,
 sleep, and lid actions while it runs.
 
-After `./install.sh`, the system unit already runs with the required privilege
-and launches Nucore inside the logged-in user's slice. See “Privileges” below
-for the detailed flow.
+After `./install.sh`, the system unit already runs with the required privilege.
+The default xorg-only profile owns tty1 and launches one minimal Xorg server;
+the desktop profile launches inside the logged-in user's slice. See
+“Privileges” below for the detailed flow.
 
 ## What's inside the bundle
 
@@ -849,14 +805,14 @@ The point of this repo is the **bundle around `nucore`**, not nucore itself:
   legacy 32-bit audio + signal pipeline survive on modern x86_64 kernels
   (shipped pre-built as `bin/sigio_fix.so`; rebuild with `make`)
 * `start.sh` for quick testing in any graphical session
-* `install.sh` for production: a tiny systemd unit that runs the
-  emulator as root **inside your existing graphical session**, plus
-  optional cross-distro display-manager autologin (GDM / SDDM /
-  LightDM). No kiosk transformation, no GDM/SDDM/LightDM disable,
-  no `getty` fight, no extra apt packages.
+* `install.sh` for production: a reversible systemd integration with a
+  recommended minimal-Xorg cabinet profile, an existing-desktop profile, and
+  an advanced unscaled fbcon profile. It never installs a desktop environment.
 
-`nucore` itself is the upstream Big Guy's Pinball 2.25.3R build (extracted from
-the official Lubuntu deb in FlipperFiles). It is not modified here.
+`nucore` itself is the upstream Big Guy's Pinball 2.25.3R build extracted from
+the official Lubuntu deb in FlipperFiles. Its emulator internals are unchanged;
+the bundled copy carries only the documented configuration/CLI initialization
+order patch described in [Nucore binary archaeology](BINARY-ARCHAEOLOGY.md).
 
 ## What's in the box
 
@@ -864,6 +820,7 @@ the official Lubuntu deb in FlipperFiles). It is not modified here.
 bin/                  binaries + launcher
   bundled.sh          re-exec wrapper around the bundled ld-linux
   nucore-as-root.sh   in-session bridge used by the systemd unit
+  nucore-xorg-only.sh dedicated minimal-Xorg cabinet session
   sigio_fix.so        LD_PRELOAD shim — fixes audio + signals on x86_64
   run                 production runner (watchdog, reboots host on stall)
   runrd               no-reboot runner (clean exit on crash)
@@ -1053,20 +1010,14 @@ not in sudoers" and refuses. nucore-portable handles this transparently:
   GNOME's own video player uses. The inhibitor is held on *your*
   session, so it works even when escalation puts nucore itself in a
   different session view.
-* **In-session install (`./install.sh`)** is the production path and is
-  the simplest from a runtime point of view: the system unit runs as
-  uid=0 (so `CAP_SYS_RAWIO` + `CAP_SYS_NICE` are already in the bag,
-  no `AmbientCapabilities` gymnastics needed), and `bin/nucore-as-root.sh`
-  uses `systemd-run --scope --slice=user-<uid>.slice --uid=0` to launch
-  the emulator **inside your user's own logind slice**. From the
-  compositor's point of view nucore is just another session app — it
-  gets keyboard focus, idle inhibitors track the right scope, and
-  `Esc` / F1 returns you cleanly to your desktop. The wrapper waits
-  for `graphical-session.target` to be `active` (the canonical "desktop
-  is fully up" signal on every modern systemd desktop) before doing
-  anything visible, so it never races mutter/KWin during their startup.
-  A polkit rule scoped to `nucore.service` only lets the active user
-  `systemctl start nucore` without a password.
+* **Installed profiles (`./install.sh`)** all run the unit as uid 0, so
+  `CAP_SYS_RAWIO` and `CAP_SYS_NICE` are already available. The recommended
+  xorg-only profile gives tty1 to one minimal Xorg server and makes Nucore its
+  sole client. The desktop profile instead uses `bin/nucore-as-root.sh` and
+  `systemd-run` to enter the active user's slice; a polkit rule scoped to
+  `nucore.service` lets that local user control the unit. The advanced console
+  profile gives tty1 directly to native SDL fbcon and intentionally provides
+  no scaling.
 
 **Override flags:** `--root=run0|pkexec|sudo|none` forces a specific
 tool; `--no-root` skips escalation entirely (only useful when caps are
