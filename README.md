@@ -73,6 +73,13 @@ login for desktop-free maintenance. When no display manager exists, the first
 choice also falls back to tty1. Stopping the service, uninstalling, shutting
 down, or rebooting does not trigger that fallback.
 
+Xorg-only can prime an existing user's systemd `default.target` before Nucore
+starts. This is not an autologin and does not activate
+`graphical-session.target`: the distribution starts its normal enabled user
+services but no desktop. On Debian 13/Kali this supplies the audio stack that
+made Pinbox audible after a tty login during real-machine testing. The same
+user remains available for independent SSH maintenance while Nucore owns tty1.
+
 For `xorg-only`, the installer asks for fullscreen/windowed output and Nucore's
 colour depth. The cabinet defaults are **fullscreen at 32 bpp**. These become
 explicit Nucore command-line arguments and therefore override stale
@@ -97,6 +104,8 @@ With a blank Portable-config answer, the guided setup explains and asks for:
 - original FTDI/USB libraries versus the newer experimental ASIX path;
 - fullscreen/windowed output and 16/32 bpp where applicable;
 - graphical greeter versus a desktop-free tty1 login after Xorg-only exits;
+- optional default user-service priming, including the distribution-configured
+  audio stack, and the existing user that owns those services;
 - desktop autostart/autologin only when the desktop profile was selected.
 
 Supplying a Nucore-Portable config means that file already owns the complete

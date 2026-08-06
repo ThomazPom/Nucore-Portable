@@ -251,6 +251,8 @@ elif [ "$INSTALL_MODE" = console ]; then
 fi
 
 MAINTENANCE_MODE="none"
+USER_SESSION_NAME=""
+USER_SESSION_UID=""
 if [ "$INSTALL_MODE" = xorg-only ]; then
     cat <<'EOF'
 
@@ -266,6 +268,39 @@ EOF
         getty|tty|console)                  MAINTENANCE_MODE=getty ;;
         *) echo "install.sh: expected display-manager or getty" >&2; exit 2 ;;
     esac
+
+    DEFAULT_SESSION_USER=""
+    for cand_uid in "${SUDO_UID:-}" "${PKEXEC_UID:-}"; do
+        [ -n "$cand_uid" ] || continue
+        cand_name=$(getent passwd "$cand_uid" | cut -d: -f1) || true
+        [ -n "$cand_name" ] && { DEFAULT_SESSION_USER="$cand_name"; break; }
+    done
+    [ -n "$DEFAULT_SESSION_USER" ] || \
+        DEFAULT_SESSION_USER=$(logname 2>/dev/null || true)
+    if [ -z "$DEFAULT_SESSION_USER" ] || [ "$DEFAULT_SESSION_USER" = root ]; then
+        DEFAULT_SESSION_USER=$(getent passwd | awk -F: \
+            '$3>=1000 && $3<65534 && $7 !~ /(nologin|false)$/ {print $1; exit}')
+    fi
+
+    cat <<'EOF'
+
+DEFAULT USER SERVICES (INCLUDING AUDIO)
+Without a login, the distribution's per-user audio stack is normally absent.
+The recommended choice starts one existing user's systemd default.target before
+Nucore. Debian 13/Kali consequently starts its configured PipeWire services;
+other systems remain free to use a different stack. This is not an autologin
+and graphical-session.target is never activated.
+EOF
+    if ask "Prime default user services for cabinet sound and SSH maintenance?" Y; then
+        read -r -p "Service user [default: $DEFAULT_SESSION_USER]: " SESSION_USER_IN
+        USER_SESSION_NAME=${SESSION_USER_IN:-$DEFAULT_SESSION_USER}
+        USER_SESSION_UID=$(id -u "$USER_SESSION_NAME" 2>/dev/null) || {
+            echo "install.sh: service user '$USER_SESSION_NAME' does not exist" >&2; exit 2;
+        }
+        [ "$USER_SESSION_UID" -ge 1000 ] || {
+            echo "install.sh: service user must have uid 1000 or greater" >&2; exit 2;
+        }
+    fi
 fi
 
 EXTRA_FLAGS=""
@@ -327,6 +362,8 @@ else
 fi
 echo "  autostart on login  : $DO_AUTOSTART"
 echo "  video               : $VIDEO_DESCRIPTION"
+[ -n "$USER_SESSION_NAME" ] && \
+    echo "  default user services: $USER_SESSION_NAME (no login, no desktop)"
 case "$INSTALL_MODE" in
     xorg-only)
         echo "  boot path           : multi-user.target -> tty1 -> minimal Xorg -> Nucore"
@@ -343,7 +380,9 @@ ask "Proceed?" Y || { echo "aborted."; exit 0; }
 
 WRAPPER="$SCRIPT_DIR/bin/nucore-as-root.sh"
 XORG_WRAPPER="$SCRIPT_DIR/bin/nucore-xorg-only.sh"
-chmod 0755 "$WRAPPER" "$XORG_WRAPPER" "$SCRIPT_DIR/start.sh" "$SCRIPT_DIR/bin/bundled.sh"
+USER_SESSION_WRAPPER="$SCRIPT_DIR/bin/nucore-user-session.sh"
+chmod 0755 "$WRAPPER" "$XORG_WRAPPER" "$USER_SESSION_WRAPPER" \
+    "$SCRIPT_DIR/start.sh" "$SCRIPT_DIR/bin/bundled.sh"
 
 # pinbox reads its sound bank from roms/<game>_pinbox.bin, but the bundle
 # only ships roms/<game>_nucore.bin. Mirror them so pinbox can boot
@@ -393,9 +432,18 @@ if [ "$INSTALL_MODE" != desktop ]; then
     if [ "$INSTALL_MODE" = xorg-only ]; then
         DESCRIPTION="minimal Xorg cabinet"
         EXEC_START="$XORG_WRAPPER $SERVICE_ARGS"
+        USER_UNIT_DEPS=""
+        USER_EXEC_PRE=""
+        if [ -n "$USER_SESSION_NAME" ]; then
+            USER_UNIT_DEPS="Wants=user@${USER_SESSION_UID}.service
+After=user@${USER_SESSION_UID}.service"
+            USER_EXEC_PRE="ExecStartPre=$USER_SESSION_WRAPPER $USER_SESSION_NAME"
+        fi
     else
         DESCRIPTION="direct fbcon cabinet (advanced)"
         EXEC_START="$SCRIPT_DIR/start.sh --console --no-root --no-inhibit $SERVICE_ARGS"
+        USER_UNIT_DEPS=""
+        USER_EXEC_PRE=""
     fi
 
     echo "[+] writing $INSTALL_MODE $UNIT"
@@ -404,6 +452,7 @@ if [ "$INSTALL_MODE" != desktop ]; then
 Description=Pinball 2000 (nucore-portable, $DESCRIPTION)
 Documentation=file:$SCRIPT_DIR/README.md
 After=systemd-user-sessions.service getty-pre.target sound.target
+$USER_UNIT_DEPS
 Before=getty.target
 Conflicts=display-manager.service getty@tty1.service
 ConditionPathExists=/dev/tty0
@@ -415,6 +464,7 @@ Type=simple
 WorkingDirectory=$SCRIPT_DIR
 Environment=TERM=linux
 Environment=NUCORE_MAINTENANCE=$MAINTENANCE_MODE
+$USER_EXEC_PRE
 ExecStart=$EXEC_START
 Restart=no
 StandardInput=tty-force
