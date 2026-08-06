@@ -82,6 +82,23 @@ user remains available for independent SSH maintenance while Nucore owns tty1.
 Nucore-Portable neither installs nor enables an SSH server; remote maintenance
 requires `sshd` to have been configured separately by the machine owner.
 
+When `--sdl12-compat` is selected, Xorg-only also starts the bundled 15 KiB
+`nucore-wm`. SDL2 expresses fullscreen through the standard EWMH window-manager
+protocol; a bare Xorg server has nobody to accept that request and otherwise
+leaves Pinbox in a centred 640×480 window. This single-application micro-WM
+implements only the required fullscreen negotiation. Nucore still decides
+between fullscreen and windowed operation, and SDL2 remains responsible for
+scaling its 640×480 render surface to the resulting screen-sized window. Native
+SDL does not use the helper because its historical X11 backend already handles
+fullscreen directly.
+
+The helper belongs to the same Xorg client session as Nucore. The wrapper waits
+for it before starting SDL2, stops and reaps it when Nucore exits, and fails
+cleanly if another WM already owns that X server. The system service uses
+`Restart=no`, so a normal exit or helper failure cannot create a restart storm.
+The auditable source is `src/nucore-wm.c`; the bundled executable can be
+reproduced with `cc -std=c99 -Os -s -o bin/nucore-wm src/nucore-wm.c -lX11`.
+
 For `xorg-only`, the installer asks for fullscreen/windowed output and Nucore's
 colour depth. The cabinet defaults are **fullscreen at 32 bpp**. These become
 explicit Nucore command-line arguments and therefore override stale
@@ -159,6 +176,8 @@ configuration, restores the saved default target and tty1 getty state for the
 dedicated profiles, and leaves unrelated system configuration alone. Packages
 accepted during the minimal-Xorg prompt are not automatically removed: they
 may have become dependencies of other software.
+When uninstalling from a live desktop, an already active display manager keeps
+the visible VT; getty is re-enabled for future boots without stealing tty1.
 
 ## Cabinet I/O and compatibility experiments
 

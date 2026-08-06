@@ -9,6 +9,32 @@ ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 if [ "${1:-}" = --client ]; then
     shift
+    case " $* " in
+        *" --sdl12-compat "*)
+            if [ -x "$ROOT_DIR/bin/nucore-wm" ]; then
+                "$ROOT_DIR/bin/nucore-wm" &
+                WM_PID=$!
+                # Wait until the EWMH ownership marker is visible to SDL2.
+                i=0
+                while [ "$i" -lt 50 ]; do
+                    "$ROOT_DIR/bin/nucore-wm" --ready 2>/dev/null && break
+                    kill -0 "$WM_PID" 2>/dev/null || {
+                        echo "nucore-xorg-only: nucore-wm failed to start" >&2
+                        wait "$WM_PID" 2>/dev/null || true
+                        exit 4
+                    }
+                    i=$((i + 1))
+                    sleep 0.02
+                done
+                if [ "$i" -ge 50 ]; then
+                    echo "nucore-xorg-only: nucore-wm readiness timeout" >&2
+                    kill "$WM_PID" 2>/dev/null || true
+                    wait "$WM_PID" 2>/dev/null || true
+                    exit 4
+                fi
+            fi
+            ;;
+    esac
     # xinit supplies DISPLAY and XAUTHORITY. Force both SDL implementations
     # through X11 so native SDL and sdl12-compat share the proven path.
     # xinit puts its client in a separate process group.  Leaving stdin on the
@@ -16,8 +42,14 @@ if [ "${1:-}" = --client ]; then
     # background group, so the kernel suspends it with SIGTTIN before SDL can
     # create a window. Keyboard input is delivered by X11; detach terminal
     # input while keeping stdout/stderr in the journal.
-    exec env SDL_VIDEODRIVER=x11 \
-        "$ROOT_DIR/start.sh" --no-root --no-inhibit "$@" </dev/null
+    STATUS=0
+    env SDL_VIDEODRIVER=x11 \
+        "$ROOT_DIR/start.sh" --no-root --no-inhibit "$@" </dev/null || STATUS=$?
+    if [ -n "${WM_PID:-}" ]; then
+        kill "$WM_PID" 2>/dev/null || true
+        wait "$WM_PID" 2>/dev/null || true
+    fi
+    exit "$STATUS"
 fi
 
 OPEN_MAINTENANCE=1

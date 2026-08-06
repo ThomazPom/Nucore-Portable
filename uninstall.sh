@@ -43,9 +43,12 @@ if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = console ]; then
     if [ -f "$STATE_DIR/getty-tty1-was-enabled" ] &&
        grep -Eq '^(enabled|enabled-runtime|alias|static)$' "$STATE_DIR/getty-tty1-was-enabled"; then
         systemctl enable getty@tty1.service 2>/dev/null || true
-        # `enable` only affects later boots. Give a machine uninstalled over
-        # SSH an immediately usable local console after nucore.service stops.
-        systemctl start getty@tty1.service 2>/dev/null || true
+        # `enable` handles later boots. Start it immediately only when no
+        # display manager owns the local screen; otherwise a freshly started
+        # tty1 can steal the visible VT from an intact desktop session.
+        if ! systemctl is-active --quiet display-manager.service 2>/dev/null; then
+            systemctl start getty@tty1.service 2>/dev/null || true
+        fi
     fi
     if [ -s "$STATE_DIR/previous-default-target" ]; then
         PREVIOUS_TARGET=$(sed -n '1p' "$STATE_DIR/previous-default-target")
