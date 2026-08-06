@@ -43,6 +43,9 @@ if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = console ]; then
     if [ -f "$STATE_DIR/getty-tty1-was-enabled" ] &&
        grep -Eq '^(enabled|enabled-runtime|alias|static)$' "$STATE_DIR/getty-tty1-was-enabled"; then
         systemctl enable getty@tty1.service 2>/dev/null || true
+        # `enable` only affects later boots. Give a machine uninstalled over
+        # SSH an immediately usable local console after nucore.service stops.
+        systemctl start getty@tty1.service 2>/dev/null || true
     fi
     if [ -s "$STATE_DIR/previous-default-target" ]; then
         PREVIOUS_TARGET=$(sed -n '1p' "$STATE_DIR/previous-default-target")

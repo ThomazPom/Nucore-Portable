@@ -79,6 +79,8 @@ starts. This is not an autologin and does not activate
 services but no desktop. On Debian 13/Kali this supplies the audio stack that
 made Pinbox audible after a tty login during real-machine testing. The same
 user remains available for independent SSH maintenance while Nucore owns tty1.
+Nucore-Portable neither installs nor enables an SSH server; remote maintenance
+requires `sshd` to have been configured separately by the machine owner.
 
 For `xorg-only`, the installer asks for fullscreen/windowed output and Nucore's
 colour depth. The cabinet defaults are **fullscreen at 32 bpp**. These become

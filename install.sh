@@ -291,7 +291,7 @@ Nucore. Debian 13/Kali consequently starts its configured PipeWire services;
 other systems remain free to use a different stack. This is not an autologin
 and graphical-session.target is never activated.
 EOF
-    if ask "Prime default user services for cabinet sound and SSH maintenance?" Y; then
+    if ask "Prime default user services for cabinet sound?" Y; then
         read -r -p "Service user [default: $DEFAULT_SESSION_USER]: " SESSION_USER_IN
         USER_SESSION_NAME=${SESSION_USER_IN:-$DEFAULT_SESSION_USER}
         USER_SESSION_UID=$(id -u "$USER_SESSION_NAME" 2>/dev/null) || {
