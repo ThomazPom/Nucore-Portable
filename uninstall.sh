@@ -1,12 +1,8 @@
 #!/bin/bash
 # uninstall.sh — reverse install.sh.
 #
-# Symmetric with install.sh: remove its service and restore the exact boot
-# target/getty state used before xorg-only or console installation. Desktop
-# autologin changes are removed separately below.
-#
-# bin/nucore-as-root.sh stays in the bundle (it ships with the source
-# tree, not installed under /).
+# Symmetric with the session-oriented installer: remove its service/session
+# files and restore the boot target and tty state recorded before installation.
 
 set -e
 
@@ -32,8 +28,23 @@ INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 systemctl stop nucore.service    2>/dev/null || true
 systemctl disable nucore.service 2>/dev/null || true
+case "$INSTALL_MODE" in
+    xorg-only|xorg|console|cage|weston|gamescope)
+        systemctl stop getty@tty1.service 2>/dev/null || true ;;
+esac
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
+rm -f /etc/profile.d/nucore-cabinet.sh
+rm -f /etc/xdg/autostart/nucore-cabinet.desktop
+rm -f /usr/share/xsessions/nucore.desktop
+rm -f /usr/share/wayland-sessions/nucore.desktop
+rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
+rm -f /run/systemd/system/getty@tty1.service.d/50-nucore-maintenance.conf
+rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+rmdir /run/systemd/system/getty@tty1.service.d 2>/dev/null || true
+rm -f /etc/nucore-portable/session.conf
+rm -f /etc/nucore-portable/launch.args
+rmdir /etc/nucore-portable 2>/dev/null || true
 systemctl daemon-reload
 
 if [ -f "$GRUB_DROPIN" ] &&
@@ -47,21 +58,31 @@ if [ -f "$GRUB_DROPIN" ] &&
     fi
 fi
 
-if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = console ]; then
+if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = xorg ] ||
+   [ "$INSTALL_MODE" = console ] || [ "$INSTALL_MODE" = cage ] ||
+   [ "$INSTALL_MODE" = weston ] || [ "$INSTALL_MODE" = gamescope ]; then
     echo "[+] restoring boot target and tty1 getty"
     # Also repairs installations made by the older console experiment, which
     # masked rather than disabled getty@tty1.
     systemctl unmask getty@tty1.service 2>/dev/null || true
-    if [ -f "$STATE_DIR/getty-tty1-was-enabled" ] &&
-       grep -Eq '^(enabled|enabled-runtime|alias|static)$' "$STATE_DIR/getty-tty1-was-enabled"; then
+    GETTY_STATE=""
+    [ -f "$STATE_DIR/getty-tty1-was-enabled" ] &&
+        GETTY_STATE=$(sed -n '1p' "$STATE_DIR/getty-tty1-was-enabled")
+    case "$GETTY_STATE" in
+      enabled|enabled-runtime|alias|static)
         systemctl enable getty@tty1.service 2>/dev/null || true
         # `enable` handles later boots. Start it immediately only when no
         # display manager owns the local screen; otherwise a freshly started
         # tty1 can steal the visible VT from an intact desktop session.
         if ! systemctl is-active --quiet display-manager.service 2>/dev/null; then
             systemctl start getty@tty1.service 2>/dev/null || true
-        fi
-    fi
+        fi ;;
+      masked|masked-runtime)
+        systemctl disable getty@tty1.service 2>/dev/null || true
+        systemctl mask getty@tty1.service 2>/dev/null || true ;;
+      *)
+        systemctl disable getty@tty1.service 2>/dev/null || true ;;
+    esac
     if [ -s "$STATE_DIR/previous-default-target" ]; then
         PREVIOUS_TARGET=$(sed -n '1p' "$STATE_DIR/previous-default-target")
         case "$PREVIOUS_TARGET" in
@@ -69,6 +90,15 @@ if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = console ]; then
             *) echo "    invalid saved target '$PREVIOUS_TARGET'; leaving current target unchanged" >&2 ;;
         esac
     fi
+fi
+
+if [ "$INSTALL_MODE" = display-manager ] &&
+   [ -s "$STATE_DIR/previous-default-target" ]; then
+    PREVIOUS_TARGET=$(sed -n '1p' "$STATE_DIR/previous-default-target")
+    case "$PREVIOUS_TARGET" in
+        *.target) systemctl set-default "$PREVIOUS_TARGET" ;;
+        *) echo "    invalid saved target '$PREVIOUS_TARGET'; leaving current target unchanged" >&2 ;;
+    esac
 fi
 
 echo "[+] removing display-manager autologin (GDM / SDDM / LightDM)"
@@ -99,7 +129,10 @@ rmdir /etc/lightdm/lightdm.conf.d 2>/dev/null || true
 
 rm -f "$STATE_DIR/install-mode" \
       "$STATE_DIR/previous-default-target" \
-      "$STATE_DIR/getty-tty1-was-enabled"
+      "$STATE_DIR/getty-tty1-was-enabled" \
+      "$STATE_DIR/gdm-session-state" \
+      "$STATE_DIR/gdm-xsession-state" \
+      "$STATE_DIR/install-user"
 rmdir "$STATE_DIR" 2>/dev/null || true
 
 echo "=== uninstall complete ==="

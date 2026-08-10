@@ -55,93 +55,146 @@ You can keep launching manually. For an appliance-like boot, run:
 ./install.sh
 ```
 
-The installer asks for one of three profiles:
+The installer presents one flat choice of cabinet host:
 
-| Profile | Boot path | Scaling | Intended use |
-|---|---|---|---|
-| **xorg-only** (default) | tty1 → minimal Xorg → Nucore | Xorg/GPU display path | Dedicated cabinet; recommended |
-| **desktop** | existing GDM/SDDM/LightDM + desktop → Nucore | Desktop display path | Convenient testing or a dual-purpose PC |
-| **console** | tty1 → native SDL 1.2 fbcon | None | Advanced: real 640×480/CRT/ArcadeVGA-style output |
+| Choice | Session path | Role |
+|---|---|---|
+| **Existing display manager** | GDM/SDDM/LightDM → normal remembered desktop session | Recommended when available |
+| **Gamescope** | console login → standalone Gamescope | Gaming/scaling-oriented |
+| **Cage** | console login → Wayland kiosk | Minimal single application |
+| **Weston** | console login → Weston kiosk shell | Reference Wayland stack |
+| **Xorg** | console login → bare Xorg | Proven SDL 1.2/X11 path |
+| **Framebuffer / direct console** | console login → SDL direct display | Lowest-level experimental path |
 
-`xorg-only` is the useful middle ground: it keeps Xorg's mature mode-setting
-and scaling without booting GNOME, KDE, a compositor, panels, or a display
-manager. Nucore is the only X client. Both bundled native SDL 1.2 and the
-opt-in SDL12-compat path use this X11 display, so normal launcher/config choices
-remain available. When Nucore or Xorg exits normally, the
-installer can either start the installed display manager or open a plain tty1
-login for desktop-free maintenance. When no display manager exists, the first
-choice also falls back to tty1. Stopping the service, uninstalling, shutting
-down, or rebooting does not trigger that fallback.
+The display-manager choice is shown only when a supported manager exists. It
+enables autologin into the user's already selected desktop session. GNOME,
+Plasma or another installed desktop may therefore appear briefly and remains
+behind the fullscreen game. Nucore Portable neither identifies nor disables
+desktop-specific shells, panels or compositors. This is the generic price of
+reusing an arbitrary distribution-managed graphical session.
 
-Xorg-only can prime an existing user's systemd `default.target` before Nucore
-starts. This is not an autologin and does not activate
-`graphical-session.target`: the distribution starts its normal enabled user
-services but no desktop. On Debian 13/Kali this supplies the audio stack that
-made Pinbox audible after a tty login during real-machine testing. The same
-user remains available for independent SSH maintenance while Nucore owns tty1.
-Nucore-Portable neither installs nor enables an SSH server; remote maintenance
-requires `sshd` to have been configured separately by the machine owner.
+Every standalone choice instead uses the same
+`agetty --autologin → login → PAM/logind` foundation and starts only its
+selected display backend. In both paths the selected account gets its normal
+`XDG_RUNTIME_DIR`, D-Bus, `systemd --user`, audio and distribution services. It
+does not need sudo or administrator membership.
 
-When `--sdl12-compat` is selected, Xorg-only also starts the bundled 15 KiB
-`nucore-wm`. SDL2 expresses fullscreen through the standard EWMH window-manager
-protocol; a bare Xorg server has nobody to accept that request and otherwise
-leaves Pinbox in a centred 640×480 window. This single-application micro-WM
-implements only the required fullscreen negotiation. Nucore still decides
-between fullscreen and windowed operation, and SDL2 remains responsible for
-scaling its 640×480 render surface to the resulting screen-sized window. Native
-SDL does not use the helper because its historical X11 backend already handles
-fullscreen directly.
+`nucore.service` remains a privileged system service. It waits for the real
+user session to become ready, then launches Nucore as root. It gives that root
+process a private, ephemeral runtime directory instead of falsely treating the
+user-owned `/run/user/<uid>` as root's `XDG_RUNTIME_DIR`. Explicit validated
+socket addresses connect it to the selected user's display, D-Bus and audio
+services. In display-manager mode it reads only `DISPLAY`,
+`XAUTHORITY` and `WAYLAND_DISPLAY` from the environment that the normal desktop
+has already imported into `systemd --user`. This needs no autostart helper,
+extra session definition or rendezvous file. Privilege never flows upward from
+the autologged user. The same account can still be used independently through
+SSH when an SSH server has been configured by the machine owner.
 
-The helper belongs to the same Xorg client session as Nucore. The wrapper waits
-for it before starting SDL2, stops and reaps it when Nucore exits, and fails
-cleanly if another WM already owns that X server. The system service uses
-`Restart=no`, so a normal exit or helper failure cannot create a restart storm.
-The auditable source is `src/nucore-wm.c`; the bundled executable can be
-reproduced with `cc -std=c99 -Os -s -o bin/nucore-wm src/nucore-wm.c -lX11`.
+Standalone modes use an intentionally ephemeral rendezvous. During a run,
+there is one mode-0600 file under `/run/user/<uid>/nucore-portable/`; `/run` is tmpfs,
+not persistent storage. It is written through an atomic temporary rename, then
+the service removes it to signal completion. The session removes the empty
+directory as it exits. There is no PID file, lock file, separate “done” file,
+daemon, socket helper or external IPC dependency.
 
-For `xorg-only`, the installer asks for fullscreen/windowed output and Nucore's
-colour depth. The cabinet defaults are **fullscreen at 32 bpp**. These become
-explicit Nucore command-line arguments and therefore override stale
-`FULL_SCREEN` or `BPP_ADJ` values in `config/pb2k.cfg`. The `console` profile
-instead deliberately fixes **fullscreen at 16 bpp**, matching its legacy
-native-SDL framebuffer purpose. The final confirmation screen prints the exact
-choice before changing the system.
+That separation also requires a trusted checkout. A root service must not
+silently execute files that the autologged account can replace. The installer
+detects a user-writable checkout (including a writable parent directory), warns,
+and requires explicit confirmation. A strict cabinet deployment should place the checkout
+under a root-owned location such as `/opt/Nucore-Portable`; accepting the
+warning instead explicitly treats the selected local account as trusted code.
 
-The installer never installs a desktop environment. In `xorg-only`, it can
-offer to install only missing `xserver-xorg-core`, `xinit`, and
-`xserver-xorg-input-libinput` packages. In `desktop`, it only uses the desktop
-already present. `console` is deliberately gated because it provides no
-software or GPU scaling and cannot use `--sdl12-compat`.
+Normal operation lets SDL discover its backend from the session environment.
+One necessary exception is native SDL 1.2 in a graphical cabinet session: the
+service selects X11 because SDL 1.2 has no Wayland backend and its root process
+can otherwise prefer `fbcon`, bypassing Xorg/Xwayland and the compositor.
+Xorg publishes `DISPLAY`; Cage, Weston and Gamescope publish their client
+display; direct console publishes neither. Native SDL 1.2 and SDL12-compat/SDL2 then select a
+backend that is actually present in their build and environment. `--console`
+only unlocks the direct-display safety gate. The installer uses native SDL 1.2
+for this profile and lets it discover fbcon. SDL2/KMSDRM remains a manual research path: on the
+tested Intel/Kali host it crashed while changing display mode and left the VT
+in graphics mode, so it is not offered as a cabinet configuration.
 
-With a blank Portable-config answer, the guided setup explains and asks for:
+The standalone wrappers avoid selecting a DRM backend or Wayland socket name
+for Gamescope and Weston. With inherited parent displays cleared, those
+compositors perform their normal standalone backend discovery and publish the
+socket names they actually chose. Gamescope presents a 640×480 game surface,
+fits it to the physical output while preserving aspect ratio, and forces the
+client to fill that virtual surface. Weston enables its kiosk shell and
+XWayland compatibility.
 
-- production watchdog versus the safer no-reboot runner;
-- SWE1, RFM, or automatic game detection;
-- Nucore versus the Pinbox fork;
-- native SDL 1.2 versus the opt-in SDL12-compat implementation (graphical
-  profiles only);
-- original FTDI/USB libraries versus the newer experimental ASIX path;
-- fullscreen/windowed output and 16/32 bpp where applicable;
-- optional quiet cabinet boot using the installed distro Plymouth theme, with
-  Nucore/Xorg output retained in the journal instead of appearing on tty1;
-- an optional hidden zero-second GRUB menu when a nonzero timeout is detected;
-- graphical greeter versus a desktop-free tty1 login after Xorg-only exits;
-- optional default user-service priming, including the distribution-configured
-  audio stack, and the existing user that owns those services;
-- desktop autostart/autologin only when the desktop profile was selected.
+When SDL12-compat is selected with Gamescope, Weston, or an existing display
+manager, the installer asks whether Nucore should use native Wayland or
+Xwayland. Native Wayland publishes only `WAYLAND_DISPLAY` and selects SDL2's
+Wayland driver. Xwayland retains `DISPLAY` and selects SDL2's X11 driver. Native SDL 1.2 keeps
+its established Xwayland path. Xorg and direct-console installations do not
+offer an inapplicable Wayland/Xwayland choice. Cage is a pure Wayland kiosk in
+this architecture, so its only supported path—SDL12-compat with native
+Wayland—is selected automatically.
 
-Supplying a Nucore-Portable config means that file already owns the complete
-launcher/game selection, so those duplicate questions are skipped. Profile
-requirements and the explicitly confirmed video mode are still appended last.
-The installer always shows a final summary and asks once more before writing
-system configuration.
+Because Nucore remains root, it must not use the login user's
+`XDG_RUNTIME_DIR` directly.
+Instead, the service validates the user-owned Wayland socket and exposes it
+through one ephemeral symbolic link inside root's private runtime directory.
+SDL2 therefore receives an ordinary relative `WAYLAND_DISPLAY` and can select
+its native Wayland backend normally. Native SDL 1.2 ignores that variable and
+can use Xwayland when available. Gamescope diagnostics go to the journal rather
+than tty1.
 
-You may also select a profile non-interactively (the remaining configuration
-questions are still asked):
+SDL12-compat still has to turn Nucore's SDL 1.2 software surface into a Wayland
+buffer. SDL2 has no usable Wayland software-window framebuffer for this path,
+so native Wayland needs the optional 32-bit EGL/GLES2 and Mesa DRI pack for
+that upload. `SDL_RENDER_DRIVER=opengles2` avoids SDL2 first selecting its
+GLX-oriented OpenGL renderer; Gamescope continues to perform final scaling and
+composition on the host GPU. Mesa selects its DRI driver automatically from
+`bundlex86/optional/wayland-mesa-i386/dri/`. The driver names there are
+symlinks to one shared Mesa binary, not duplicate copies.
+
+The core clone intentionally excludes that approximately 208 MiB extracted
+runtime because native SDL2 Wayland is experimental and Xorg/Xwayland do not
+need it. The installer explains the trade-off and offers the verified 49 MiB
+archive from this project's GitHub Releases only when native Wayland is
+selected. It can also be managed directly:
 
 ```sh
-./install.sh --xorg-only
-./install.sh --desktop
+./bin/wayland-mesa.sh install
+./bin/wayland-mesa.sh status
+./bin/wayland-mesa.sh remove
+```
+
+The small `sdl12_wayland_fix.so` adapter handles two legacy details at the
+SDL 1.2 ABI boundary. First, Wayland requires UTF-8 window titles, while the
+emulators occasionally supply an 8-bit caption that X11 accepted. Second,
+Pinbox presents frames from a render worker rather than the thread that
+initialized SDL. Gamescope showed a black native-Wayland surface even though
+Pinbox called `SDL_Flip` at 60 Hz. The adapter coalesces those worker flips and
+presents the latest completed frame when the SDL thread next polls events.
+It is loaded only by SDL12-compat on Wayland; native SDL and every X11 path are
+unchanged. Its auditable source is `src/sdl12_wayland_fix.c`.
+
+Bare Xorg starts the bundled 15 KiB `nucore-wm` only for SDL12-compat. It handles
+SDL2's fullscreen request without adding a desktop. Native SDL 1.2 manages its
+historical X11 fullscreen path itself. The auditable source is
+`src/nucore-wm.c`.
+
+The installer can offer to install only the selected backend's missing distro
+package: `gamescope`, `cage`, `weston`, or the minimal Xorg components. It never
+installs a desktop environment. It also asks for the game, watchdog, Pinbox,
+SDL implementation, ASIX experiment, fullscreen mode, colour depth, maintenance
+fallback, and optional quiet/zero-delay cabinet boot before showing a summary.
+It can also prepend a Nucore-Portable `--config` file; the guided selections
+remain cumulative and are applied afterward.
+
+The backend can be preselected while retaining the remaining questions:
+
+```sh
+./install.sh --display-manager
+./install.sh --gamescope
+./install.sh --cage
+./install.sh --weston
+./install.sh --xorg
 ./install.sh --console
 ```
 
@@ -152,13 +205,16 @@ move it, then reinstall.
 
 ### What changes
 
-All profiles write `/etc/systemd/system/nucore.service` and record their mode
-under `/var/lib/nucore-portable/`. `xorg-only` and `console` select
-`multi-user.target`, reserve tty1 from getty, and remember the previous default
-target and getty state. `desktop` keeps the graphical boot and can configure
-autologin plus a narrowly scoped polkit rule. The desktop profile supports
-GDM, SDDM, and LightDM; the dedicated profile is independent of which display
-manager is installed because it starts it only after the game exits.
+All choices write `/etc/systemd/system/nucore.service` and record their mode
+under `/var/lib/nucore-portable/`. The display-manager path keeps
+`graphical.target` and enables DM autologin without changing the user's
+remembered GNOME, Plasma, X11 or Wayland session.
+Standalone paths select `multi-user.target`, configure a normal PAM-backed
+autologin on tty1, and use `login -s` to select the project session shell
+without changing the account's configured shell. They remember the previous
+target/getty state. On normal game exit they can start the installed display
+manager or leave a tty login for maintenance. Administrative service stops do
+not trigger that fallback.
 
 Paul's cabinet video is an excellent example of broader Linux appliance
 tuning: its boot is unusually fast and the handoff into Nucore is nearly
@@ -174,14 +230,19 @@ systemctl stop nucore
 ./uninstall.sh
 ```
 
-`uninstall.sh` removes project-owned service, polkit, and display-manager
-configuration, restores the saved default target and tty1 getty state for the
-dedicated profiles, and leaves unrelated system configuration alone. Packages
-accepted during the minimal-Xorg prompt are not automatically removed: they
-may have become dependencies of other software.
+`uninstall.sh` removes project-owned service and display-manager
+configuration (plus obsolete polkit files from older releases), restores the
+saved default target and tty1 getty state, and leaves unrelated configuration
+alone. Packages accepted during a backend prompt are not automatically removed:
+they may have become dependencies of other software.
 It also removes Nucore-Portable's separate GRUB drop-in, when present, and
 regenerates GRUB without modifying the distribution's theme or the user's
 original `/etc/default/grub` settings.
+While the zero-second cabinet setting is installed, the drop-in disables the
+GRUB theme and graphical background as well: otherwise GRUB can flash the
+distro theme for a few milliseconds while initializing it, despite having no
+menu delay. Shift/Escape recovery remains available through GRUB's plain text
+menu. Removing the drop-in exposes the distribution theme again unchanged.
 When uninstalling from a live desktop, an already active display manager keeps
 the visible VT; getty is re-enabled for future boots without stealing tty1.
 
@@ -196,7 +257,7 @@ These are Nucore controls, not launcher shortcuts:
 
 | Function key | Additional legacy binding | Function |
 |---|---|---|
-| `F1` | `,` | Exit Nucore; after cabinet integration this returns to the desktop |
+| `F1` | `,` | Exit Nucore; cabinet integration then opens its chosen maintenance fallback |
 | `F2` | `.` | Toggle the screen upside down, useful while servicing the display |
 | `F3` | `/` | Decrease GI/light timing by one fine step |
 | `F4` | Right Shift | Increase GI/light timing by one fine step |
@@ -321,6 +382,10 @@ Examples:
 # Experimental ASIX libftchipid using libstdc++.so.6
 ./start.sh --asix --no-reboot swe1_14
 
+# SDL12-compat display path (requires a matching live display)
+./start.sh --no-reboot --sdl12-compat --wayland swe1_14
+./start.sh --no-reboot --sdl12-compat --xwayland swe1_14
+
 # Production cabinet runners: intentionally omit --no-reboot
 ./start.sh swe1_14 -fullscreen -bpp 16
 ./start.sh --pinbox rfm_15 -fullscreen -bpp 16
@@ -340,10 +405,13 @@ Examples:
 | Option | Default | Effect |
 |---|---|---|
 | `--no-reboot` | off | Select the safe testing runner and no-watchdog emulator binary |
+| `--no-runner` | off | Launch the no-watchdog emulator binary directly, without runner setup or crash handling; diagnostic only |
 | `--pinbox` | off | Run the Pinbox fork instead of Nucore |
 | `--asix` | off | **Experimental:** select the newer ASIX `libftchipid` path that uses `libstdc++.so.6` instead of the original `.so.5` |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
-| `--console` | off | **Advanced:** native SDL 1.2 fbcon output with no scaling; refuses active graphical sessions |
+| `--wayland` | auto | With SDL12-compat, require SDL2 native Wayland and apply its bundled GLES2 compatibility defaults |
+| `--xwayland` | auto | With SDL12-compat, require SDL2's X11 driver through the available Xwayland server |
+| `--console` | off | **Advanced:** permit SDL direct display after refusing active graphical sessions; native SDL may choose fbcon and SDL2 may choose KMSDRM |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
 | `--no-sigio-shim` | off | Disable RTC/SIGIO protection while leaving the selected mode's audio behavior unchanged; diagnostic only |
@@ -640,7 +708,7 @@ shim remains the default.
 Nucore package is from 2018 and includes still older dependencies (the bundled
 FTDI D2XX library is approximately 2010). The optional ASIX `libftchipid` 0.1.0
 experiment is from 2011. At the newest end, the SDL bridge is Debian 13's
-`sdl12-compat` 1.2.68-3 running over bundled SDL 2.26.5. Thus the alternatives
+`sdl12-compat` 1.2.68-3 running over bundled SDL 2.32.4. Thus the alternatives
 span several generations; this project claims provenance only up to those
 named Debian 13 package versions, not that every bundled library is current.
 
@@ -818,7 +886,8 @@ Expected markers:
 
 ```text
 [sigio_fix] loaded — ... sigio=... audio=...   # reports active shim halves
-INFO: sdl12-compat 1.2.68, ... SDL2 2.26.5     # SDL 2 path is active
+INFO: sdl12-compat 1.2.68, ... SDL2 2.26.5     # core X11/Xwayland path
+INFO: sdl12-compat 1.2.68, ... SDL2 2.32.4     # optional native-Wayland pack
 *** EXPERIMENT: sigio_fix.so is NOT loaded *** # --no-shim is active
 ```
 
@@ -851,10 +920,35 @@ runtime variables are explicitly forwarded so the elevated emulator remains
 inside the current graphical session. `systemd-inhibit` prevents locking,
 sleep, and lid actions while it runs.
 
-After `./install.sh`, the system unit already runs with the required privilege.
-The default xorg-only profile owns tty1 and launches one minimal Xorg server;
-the desktop profile launches inside the logged-in user's slice. See
-“Privileges” below for the detailed flow.
+After `./install.sh`, the root system unit already has the required privilege.
+It attaches to the runtime/display environment published by a real PAM/logind
+user session; that user never launches or elevates Nucore.
+
+### Interactive visual matrix
+
+The maintainer matrix runs every supported Pinbox display combination for up
+to 40 seconds, then records an OK/KO rating and an optional comment:
+
+```sh
+# Standalone cabinet paths from a TTY
+./test-matrix.sh
+./test-matrix.sh --only:gamescope-sdl2-wayland
+
+# Nested paths inside the currently running desktop
+./test-matrix.sh --desktop
+./test-matrix.sh --desktop --only:display-manager-sdl2-wayland
+
+# Diagnostic: run SDL2 without the bundled 32-bit Mesa DRI stack
+./test-matrix.sh --no-bundled-mesa --only:gamescope-sdl2-wayland
+```
+
+Desktop mode leaves the active display manager and VT alone. Gamescope, Cage,
+and Weston run nested in the current graphical session; display-manager cases
+attach directly to that live session. Bare Xorg and direct-console cases remain
+TTY-only because they need ownership of a VT/display device. Results and per-run
+logs are retained under `/tmp/nucore-visual-matrix.*/`. The matrix also works
+from an uninstalled checkout: it creates a minimal non-enabled service and
+configuration for the duration of the test, then removes them on exit.
 
 ## What's inside the bundle
 
@@ -868,9 +962,10 @@ The point of this repo is the **bundle around `nucore`**, not nucore itself:
   legacy 32-bit audio + signal pipeline survive on modern x86_64 kernels
   (shipped pre-built as `bin/sigio_fix.so`; rebuild with `make`)
 * `start.sh` for quick testing in any graphical session
-* `install.sh` for production: a reversible systemd integration with a
-  recommended minimal-Xorg cabinet profile, an existing-desktop profile, and
-  an advanced unscaled fbcon profile. It never installs a desktop environment.
+* `test-matrix.sh` for guided TTY or nested-desktop backend validation
+* `install.sh` for production: a reversible session-oriented systemd
+  integration with display-manager, Gamescope, Cage, Weston, Xorg and direct
+  console choices. It never installs a desktop environment.
 
 `nucore` itself is the upstream Big Guy's Pinball 2.25.3R build extracted from
 the official Lubuntu deb in FlipperFiles. Its emulator internals are unchanged;
@@ -882,9 +977,11 @@ order patch described in [Nucore binary archaeology](BINARY-ARCHAEOLOGY.md).
 ```
 bin/                  binaries + launcher
   bundled.sh          re-exec wrapper around the bundled ld-linux
-  nucore-as-root.sh   in-session bridge used by the systemd unit
-  nucore-xorg-only.sh dedicated minimal-Xorg cabinet session
+  wayland-mesa.sh     optional Mesa i386 pack manager
+  nucore-service.sh   privileged service side of the session broker
+  nucore-session.sh   unprivileged selected-backend host
   sigio_fix.so        LD_PRELOAD shim — fixes audio + signals on x86_64
+  sdl12_wayland_fix.so  SDL12-compat native-Wayland presentation adapter
   run                 production runner (watchdog, reboots host on stall)
   runrd               no-reboot runner (clean exit on crash)
   run_pb_rd           no-reboot runner for the pinbox fork
@@ -898,13 +995,17 @@ bin/                  binaries + launcher
   n_update.old        Older n_update (kept for archeology)
 src/                  source for our bits of the bundle
   sigio_fix.c         LD_PRELOAD shim source (rebuild with `make`)
-  Makefile            builds ../bin/sigio_fix.so
+  sdl12_wayland_fix.c native-Wayland adapter source
+  Makefile            builds both adapters in ../bin/
+test-matrix.sh        guided Pinbox backend matrix (TTY or desktop-hosted)
 bundlex86/            i386 shared libraries the bundle ships
   direct/             libs nucore links against directly
   indirect/           transitive deps + ld-linux.so.2
   alsa-lib/           32-bit Pulse ALSA plugin set
   asix/               complete ASIX libftchipid 0.1.0 / libstdc++.so.6 overlay
   sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
+  optional/           downloaded add-ons, absent from the core clone
+    wayland-mesa-i386/  native-Wayland EGL/GLES2 + Mesa DRI runtime
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
 update/               per-game update trees; both may coexist
   swe1_14/            SWE1 update tree (latest official Williams: 0150)
@@ -1073,14 +1174,11 @@ not in sudoers" and refuses. nucore-portable handles this transparently:
   GNOME's own video player uses. The inhibitor is held on *your*
   session, so it works even when escalation puts nucore itself in a
   different session view.
-* **Installed profiles (`./install.sh`)** all run the unit as uid 0, so
-  `CAP_SYS_RAWIO` and `CAP_SYS_NICE` are already available. The recommended
-  xorg-only profile gives tty1 to one minimal Xorg server and makes Nucore its
-  sole client. The desktop profile instead uses `bin/nucore-as-root.sh` and
-  `systemd-run` to enter the active user's slice; a polkit rule scoped to
-  `nucore.service` lets that local user control the unit. The advanced console
-  profile gives tty1 directly to native SDL fbcon and intentionally provides
-  no scaling.
+* **Installed sessions (`./install.sh`)** keep the emulator in a uid-0 system
+  service while a normal PAM/logind login supplies runtime, audio and display
+  services. Display-manager mode obtains that login from GDM/SDDM/LightDM;
+  standalone backends obtain it through agetty and `/bin/login`. No polkit or
+  administrator rights are granted to the session user.
 
 **Override flags:** `--root=run0|pkexec|sudo|none` forces a specific
 tool; `--no-root` skips escalation entirely (only useful when caps are
@@ -1103,8 +1201,8 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
   initialization-order patch
 * `bin/{nucore.225, nucore.old, run, n_update, n_update.old}` — extracted from
   the same upstream Nucore package
-* `bin/{runrd, run_pb_rd, pinbox_nwd, sigio_fix.so}` — local testing/support
-  builds
+* `bin/{runrd, run_pb_rd, pinbox_nwd, sigio_fix.so,
+  sdl12_wayland_fix.so}` — local testing/support builds
 * `bin/pinbox` — the pinbox fork of nucore
 * `bundlex86/` — pre-curated i386 system libraries (libc, libSDL, libmpg123,
   libasound, ld-linux.so.2, etc.) collected from Debian/Ubuntu i386 packages
@@ -1112,6 +1210,10 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
   plugins used to avoid host multiarch dependencies
 * `bundlex86/sdl12-compat/` — Debian 13 i386 `sdl12-compat` 1.2.68-3;
   checksum and full redistribution notices are included beside the binary
+* optional `bundlex86/optional/wayland-mesa-i386/` — the verified
+  `wayland-mesa-i386-v2` GitHub Release asset, downloaded only for native
+  SDL2 Wayland; it includes SDL2 2.32.4 plus the EGL/GLES2/Mesa renderer, and
+  its DRI driver aliases share one Mesa binary
 * `bundlex86/asix/libftchipid.so.0` — official ASIX i386 `libftchipid` 0.1.0;
   source URL, naming details and SHA-256 checksums are recorded in the adjacent
   `README.md`

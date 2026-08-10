@@ -1,508 +1,312 @@
 #!/bin/bash
-# install.sh — scoped, reversible cabinet integration for Nucore-Portable.
-#
-# Profiles:
-#   xorg-only (recommended)  minimal Xorg and Nucore on tty1; no desktop
-#   desktop                  attach Nucore to an existing graphical session
-#   console                  native SDL fbcon, no scaler (advanced/legacy)
-#
-# The installer never installs a desktop environment.  Xorg-only may offer to
-# install just Xorg, xinit and the libinput Xorg driver when they are missing.
-# Reverse project-owned changes with ./uninstall.sh.
+# Session-oriented cabinet installer.
+set -euo pipefail
 
-set -e
-
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cd "$SCRIPT_DIR"
-
-INSTALL_MODE=""
-INSTALL_MODE_ARG=""
-case "${1:-}" in
-    --xorg-only) INSTALL_MODE=xorg-only; INSTALL_MODE_ARG=--xorg-only; shift ;;
-    --desktop)   INSTALL_MODE=desktop;   INSTALL_MODE_ARG=--desktop; shift ;;
-    --console)   INSTALL_MODE=console;   INSTALL_MODE_ARG=--console; shift ;;
-    -h|--help)
-        cat <<EOF
-Usage: $0 [--xorg-only|--desktop|--console]
-
-  --xorg-only  dedicated cabinet: minimal Xorg + Nucore (recommended)
-  --desktop    launch in an existing GNOME/KDE/etc. session
-  --console    direct SDL fbcon, no scaling (advanced/legacy)
-EOF
-        exit 0 ;;
-    "") ;;
-    *) echo "install.sh: unknown option '$1'" >&2; exit 2 ;;
-esac
-[ "$#" -eq 0 ] || { echo "install.sh: unexpected arguments: $*" >&2; exit 2; }
-
-# Self-elevate: run0 (Debian 13) → sudo → pkexec.
-if [ "$EUID" -ne 0 ]; then
-    REEXEC_ARGS=()
-    [ -n "$INSTALL_MODE_ARG" ] && REEXEC_ARGS+=("$INSTALL_MODE_ARG")
-    for esc in run0 sudo pkexec; do
-        if command -v "$esc" >/dev/null 2>&1; then
-            echo "[install.sh] re-launching under $esc to gain root..."
-            case "$esc" in
-                run0)   exec run0 --description="nucore-portable installer" -- "$0" "${REEXEC_ARGS[@]}" ;;
-                sudo)   exec sudo "$0" "${REEXEC_ARGS[@]}" ;;
-                pkexec) exec pkexec "$0" "${REEXEC_ARGS[@]}" ;;
-            esac
-        fi
-    done
-    echo "install.sh: must be run as root, and no escalator (run0/sudo/pkexec) is available." >&2
-    exit 1
-fi
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+STATE=/var/lib/nucore-portable
+CONF_DIR=/etc/nucore-portable
+CONF=$CONF_DIR/session.conf
+TTY=tty1
+GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 
 ask() {
-    local prompt="$1" default="$2" answer
-    if [ "$default" = "Y" ]; then
-        read -r -p "$prompt [Y/n] " answer
-        case "${answer:-Y}" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
-    else
-        read -r -p "$prompt [y/N] " answer
-        case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
-    fi
+    local prompt=$1 default=$2 answer
+    read -r -p "$prompt [$([ "$default" = Y ] && echo Y/n || echo y/N)] " answer
+    [ "${answer:-$default}" = Y ] || [ "${answer:-$default}" = y ] ||
+        [ "${answer:-$default}" = yes ] || [ "${answer:-$default}" = YES ]
 }
 
-case "$SCRIPT_DIR/" in
-    /tmp/*)
-        cat >&2 <<EOF
+case "${1:-}" in
+    -h|--help)
+        cat <<EOF
+Usage: $ROOT/install.sh [BACKEND]
 
-WARNING: this checkout is below /tmp:
-  $SCRIPT_DIR
-
-The installer does not copy the bundle. The service points to this exact
-directory, which may disappear at reboot.
+Backends:
+  --display-manager   existing GDM, SDDM or LightDM (recommended when present)
+  --gamescope         standalone Gamescope session
+  --cage              standalone Cage kiosk session
+  --weston            standalone Weston kiosk session
+  --xorg              standalone minimal Xorg session
+  --console           framebuffer / direct-display session
 EOF
-        ask "Continue installing from volatile /tmp anyway?" N || exit 2
-        ;;
+        exit 0 ;;
 esac
 
-if [ -z "$INSTALL_MODE" ]; then
-    cat <<EOF
-Installation profile:
-  1. xorg-only  minimal Xorg + Nucore, dedicated cabinet (recommended)
-  2. desktop    use an existing graphical desktop
-  3. console    direct fbcon, native SDL only, no scaling (advanced)
-EOF
-    read -r -p "Profile [1]: " MODE_IN
-    case "${MODE_IN:-1}" in
-        1|xorg-only|xorg|cabinet) INSTALL_MODE=xorg-only ;;
-        2|desktop|graphical)      INSTALL_MODE=desktop ;;
-        3|console|fbcon)          INSTALL_MODE=console ;;
-        *) echo "install.sh: expected 1, 2 or 3" >&2; exit 2 ;;
-    esac
-fi
-
-if [ "$INSTALL_MODE" = console ]; then
-    cat <<'EOF'
-
-DIRECT CONSOLE MODE IS ADVANCED AND PROVIDES NO SCALING.
-Use it only with a display path already proven to present 640x480 correctly
-(for example an arcade CRT, ArcadeVGA, or a monitor with its own scaler).
-SDL12-compat is not supported in this profile.
-The installed service always requests Nucore fullscreen at 16 bpp: this is the
-legacy framebuffer path Nucore was designed for. These command-line values
-override FULL_SCREEN and BPP_ADJ from config/pb2k.cfg at boot.
-EOF
-    read -r -p "Type DIRECT CONSOLE to continue: " CONSOLE_ACK
-    [ "$CONSOLE_ACK" = "DIRECT CONSOLE" ] || { echo "Console install aborted."; exit 2; }
-fi
-
-STATE_DIR=/var/lib/nucore-portable
-GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
-if [ -f "$STATE_DIR/install-mode" ]; then
-    EXISTING_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
-    if [ "$EXISTING_MODE" != "$INSTALL_MODE" ]; then
-        echo "install.sh: '$EXISTING_MODE' is already installed." >&2
-        echo "Run ./uninstall.sh before switching to '$INSTALL_MODE'." >&2
-        exit 2
-    fi
-fi
-
-echo "=== nucore-portable install ==="
-echo "Bundle root  : $SCRIPT_DIR"
-echo "Profile      : $INSTALL_MODE"
-echo
-
-PORTABLE_CONFIG=""
-PORTABLE_CONFIG_WORDS=""
-cat <<'EOF'
-CONFIGURATION SOURCE
-Leave this blank for the guided questions below. Alternatively, enter a
-Nucore-Portable command-line config containing the complete launcher/game
-selection; the installer will load it first and still append the selected
-profile's explicit video mode afterward.
-EOF
-read -r -p "Nucore-Portable command-line config (blank: none): " CONFIG_IN
-if [ -n "$CONFIG_IN" ]; then
-    case "$CONFIG_IN" in
-        /*) PORTABLE_CONFIG="$CONFIG_IN" ;;
-        *)  PORTABLE_CONFIG="$SCRIPT_DIR/$CONFIG_IN" ;;
-    esac
-    PORTABLE_CONFIG=$(readlink -f -- "$PORTABLE_CONFIG") || {
-        echo "install.sh: portable config does not exist" >&2; exit 2;
-    }
-    [ -f "$PORTABLE_CONFIG" ] || {
-        echo "install.sh: portable config is not a regular file: $PORTABLE_CONFIG" >&2; exit 2;
-    }
-    if ! PORTABLE_CONFIG_WORDS=$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$PORTABLE_CONFIG" \
-        | xargs -n1 printf '%s\n'); then
-        echo "install.sh: cannot parse portable config: $PORTABLE_CONFIG" >&2
-        exit 2
-    fi
-    if [ "$INSTALL_MODE" = console ] &&
-       printf '%s\n' "$PORTABLE_CONFIG_WORDS" | grep -Fxq -- --sdl12-compat; then
-        echo "install.sh: console profile cannot use --sdl12-compat from $PORTABLE_CONFIG" >&2
-        exit 2
-    fi
-    case "$PORTABLE_CONFIG" in
-        *[!A-Za-z0-9_./-]*)
-            echo "install.sh: installed config path contains unsupported characters: $PORTABLE_CONFIG" >&2
-            exit 2 ;;
-    esac
-fi
-
-DEFAULT_GAME=swe1_14
-USE_PINBOX=0
-USE_NO_REBOOT=0
-USE_SDL12_COMPAT=0
-USE_ASIX=0
-if [ -z "$PORTABLE_CONFIG" ]; then
-    cat <<'EOF'
-
-EMULATOR SETUP
-The production runner includes Nucore's cabinet watchdog. It can reboot the
-computer after an emulator stall. Keep it for a finished cabinet; disable it
-while commissioning unfamiliar hardware or configuration.
-EOF
-    ask "Enable the production watchdog?" Y || USE_NO_REBOOT=1
-
-    read -r -p "Default game [swe1_14/rfm_15/auto] (default: swe1_14): " GAME_IN
-    case "$GAME_IN" in
-        "")                  ;;
-        swe1_14|rfm_15|auto) DEFAULT_GAME="$GAME_IN" ;;
-        swe1)                DEFAULT_GAME=swe1_14 ;;
-        rfm)                 DEFAULT_GAME=rfm_15 ;;
-        *) echo "install.sh: expected swe1_14, rfm_15 or auto" >&2; exit 2 ;;
-    esac
-    ask "Boot the pinbox fork instead of nucore?" N && USE_PINBOX=1
-
-    if [ "$INSTALL_MODE" != console ]; then
-        cat <<'EOF'
-
-SDL IMPLEMENTATION
-Native SDL 1.2 is the established default. SDL12-compat preserves Nucore's
-SDL 1.2 interface but implements it over bundled SDL 2; it may integrate better
-with modern displays, but remains an opt-in compatibility experiment.
-EOF
-        ask "Use SDL12-compat instead of native SDL 1.2?" N && USE_SDL12_COMPAT=1
-    fi
-
-    cat <<'EOF'
-
-FTDI/USB LIBRARY
-The original Nucore libftchipid path is the proven default and carries its old
-libstdc++.so.5 dependency inside the bundle. The opt-in ASIX 0.1.0 path uses
-libstdc++.so.6 and is newer, but has less real-cabinet validation.
-EOF
-    ask "Use the experimental newer ASIX library path?" N && USE_ASIX=1
-fi
-
-cat <<'EOF'
-
-RUNTIME PROTECTION
-The signal and audio shims stay enabled by default in every installation. Their
-disable switches are diagnostic tools, not cabinet recommendations; advanced
-users can place --no-audio-shim, --no-sigio-shim, or --no-shim in a Portable
-config for a controlled A/B test.
-EOF
-
-VIDEO_ARGS=""
-VIDEO_DESCRIPTION="use config/pb2k.cfg"
-if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = desktop ]; then
-    cat <<'EOF'
-
-VIDEO SETUP
-Fullscreen is recommended for a cabinet. 32 bpp is recommended on a graphical
-display: Xorg/the desktop handles the physical monitor while Nucore gets its
-expected surface. The selected values are appended to the service command line,
-so they override old FULL_SCREEN/BPP_ADJ values in config/pb2k.cfg and any
-earlier video option in the Portable config.
-EOF
-    if ask "Start Nucore fullscreen?" Y; then
-        VIDEO_MODE=-fullscreen
-        VIDEO_MODE_NAME=fullscreen
-    else
-        VIDEO_MODE=-window
-        VIDEO_MODE_NAME=windowed
-        echo "[!] Windowed mode is intended for diagnosis, not a finished cabinet."
-    fi
-    read -r -p "Nucore colour depth [32] (16 or 32): " VIDEO_BPP
-    VIDEO_BPP=${VIDEO_BPP:-32}
-    case "$VIDEO_BPP" in
-        16|32) ;;
-        *) echo "install.sh: colour depth must be 16 or 32" >&2; exit 2 ;;
-    esac
-    VIDEO_ARGS="$VIDEO_MODE -bpp $VIDEO_BPP"
-    VIDEO_DESCRIPTION="$VIDEO_MODE_NAME, ${VIDEO_BPP} bpp (explicit service override)"
-elif [ "$INSTALL_MODE" = console ]; then
-    VIDEO_ARGS="-fullscreen -bpp 16"
-    VIDEO_DESCRIPTION="fullscreen, 16 bpp (required console default)"
-fi
-
-MAINTENANCE_MODE="none"
-USER_SESSION_NAME=""
-USER_SESSION_UID=""
-if [ "$INSTALL_MODE" = xorg-only ]; then
-    cat <<'EOF'
-
-AFTER NUCORE EXITS
-The display-manager choice opens GDM/SDDM/LightDM for graphical maintenance,
-which also starts the normal desktop audio session after login. The tty-login
-choice keeps the machine desktop-free and opens a text login on tty1; it is
-especially useful for cabinet diagnosis and the lightest permanent setup.
-EOF
-    read -r -p "Maintenance [display-manager/getty] (default: display-manager): " MAINTENANCE_IN
-    case "${MAINTENANCE_IN:-display-manager}" in
-        display-manager|display|desktop|dm) MAINTENANCE_MODE=display-manager ;;
-        getty|tty|console)                  MAINTENANCE_MODE=getty ;;
-        *) echo "install.sh: expected display-manager or getty" >&2; exit 2 ;;
-    esac
-
-    DEFAULT_SESSION_USER=""
-    for cand_uid in "${SUDO_UID:-}" "${PKEXEC_UID:-}"; do
-        [ -n "$cand_uid" ] || continue
-        cand_name=$(getent passwd "$cand_uid" | cut -d: -f1) || true
-        [ -n "$cand_name" ] && { DEFAULT_SESSION_USER="$cand_name"; break; }
-    done
-    [ -n "$DEFAULT_SESSION_USER" ] || \
-        DEFAULT_SESSION_USER=$(logname 2>/dev/null || true)
-    if [ -z "$DEFAULT_SESSION_USER" ] || [ "$DEFAULT_SESSION_USER" = root ]; then
-        DEFAULT_SESSION_USER=$(getent passwd | awk -F: \
-            '$3>=1000 && $3<65534 && $7 !~ /(nologin|false)$/ {print $1; exit}')
-    fi
-
-    cat <<'EOF'
-
-DEFAULT USER SERVICES (INCLUDING AUDIO)
-Without a login, the distribution's per-user audio stack is normally absent.
-The recommended choice starts one existing user's systemd default.target before
-Nucore. Debian 13/Kali consequently starts its configured PipeWire services;
-other systems remain free to use a different stack. This is not an autologin
-and graphical-session.target is never activated.
-EOF
-    if ask "Prime default user services for cabinet sound?" Y; then
-        read -r -p "Service user [default: $DEFAULT_SESSION_USER]: " SESSION_USER_IN
-        USER_SESSION_NAME=${SESSION_USER_IN:-$DEFAULT_SESSION_USER}
-        USER_SESSION_UID=$(id -u "$USER_SESSION_NAME" 2>/dev/null) || {
-            echo "install.sh: service user '$USER_SESSION_NAME' does not exist" >&2; exit 2;
-        }
-        [ "$USER_SESSION_UID" -ge 1000 ] || {
-            echo "install.sh: service user must have uid 1000 or greater" >&2; exit 2;
-        }
-    fi
-fi
-
-# Dedicated cabinet profiles can hide boot chatter without touching the
-# distribution's own /etc/default/grub or theme files. Detect the effective
-# numeric timeout from the base file plus drop-ins (later files win).
-QUIET_BOOT=0
-ZERO_GRUB_TIMEOUT=0
-GRUB_TIMEOUT_DETECTED=""
-GRUB_CAN_UPDATE=0
-SERVICE_OUTPUT=journal+console
-if [ "$INSTALL_MODE" != desktop ] && [ -f /etc/default/grub ] &&
-   command -v update-grub >/dev/null 2>&1; then
-    GRUB_CAN_UPDATE=1
-    for grub_file in /etc/default/grub /etc/default/grub.d/*.cfg; do
-        [ -f "$grub_file" ] || continue
-        [ "$grub_file" = "$GRUB_DROPIN" ] && continue
-        grub_value=$(sed -n 's/^[[:space:]]*GRUB_TIMEOUT[[:space:]]*=[[:space:]]*//p' \
-            "$grub_file" | tail -n 1)
-        [ -n "$grub_value" ] || continue
-        grub_value=${grub_value#\"}; grub_value=${grub_value%\"}
-        grub_value=${grub_value#\'}; grub_value=${grub_value%\'}
-        case "$grub_value" in
-            ''|*[!0-9]*) ;;
-            *) GRUB_TIMEOUT_DETECTED=$grub_value ;;
+if [ "$EUID" -ne 0 ]; then
+    for tool in run0 sudo pkexec; do
+        command -v "$tool" >/dev/null 2>&1 || continue
+        case "$tool" in
+            run0) exec run0 --description="nucore-portable installer" -- "$ROOT/install.sh" "$@" ;;
+            *)    exec "$tool" "$ROOT/install.sh" "$@" ;;
         esac
     done
+    echo "install.sh: root privileges are required" >&2; exit 1
+fi
 
-    cat <<'EOF'
+case "$ROOT/" in
+    /tmp/*) echo "WARNING: $ROOT is volatile and may disappear at reboot." >&2
+            ask "Continue from /tmp?" N || exit 2 ;;
+esac
 
-CABINET BOOT PRESENTATION
-The quiet option keeps the distribution's existing Plymouth splash (when
-installed) and sends Nucore/Xorg output only to the journal. The transition
-from Plymouth to Xorg may briefly be black, but tty1 will not show boot or
-emulator text. This is reversible and does not replace the distro theme.
-EOF
-    if ask "Hide boot and Nucore/Xorg console text?" Y; then
-        QUIET_BOOT=1
-        SERVICE_OUTPUT=journal
+if [ -f "$STATE/install-mode" ]; then
+    echo "install.sh: an existing cabinet integration is installed." >&2
+    echo "Run ./uninstall.sh first, then run ./install.sh again." >&2
+    exit 2
+fi
+
+dm_service=""
+if systemctl cat display-manager.service >/dev/null 2>&1; then
+    dm_service=$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null || true)
+    [ -n "$dm_service" ] || dm_service=display-manager.service
+fi
+if [ -n "$dm_service" ]; then
+    case "$dm_service" in *gdm*|*sddm*|*lightdm*) ;; *) dm_service="" ;; esac
+fi
+
+backend=""
+case "${1:-}" in
+    --display-manager|--desktop) backend=display-manager ;;
+    --gamescope) backend=gamescope ;;
+    --cage) backend=cage ;;
+    --weston) backend=weston ;;
+    --xorg|--xorg-only) backend=xorg ;;
+    --console) backend=console ;;
+    "") ;;
+    *) echo "install.sh: unknown setup '$1'" >&2; exit 2 ;;
+esac
+
+if [ -z "$backend" ]; then
+    echo "Which setup do you want to use?"
+    choices=()
+    if [ -n "$dm_service" ]; then
+        choices+=(display-manager)
+        echo "1. Existing display manager — Recommended"
     fi
+    choices+=(gamescope cage weston xorg console)
+    number=0
+    for choice in "${choices[@]}"; do
+        number=$((number + 1))
+        [ "$choice" = display-manager ] && continue
+        case "$choice" in
+            gamescope) label=Gamescope ;; cage) label=Cage ;; weston) label=Weston ;;
+            xorg) label=Xorg ;; console) label="Framebuffer / direct console" ;;
+        esac
+        printf '%d. %s\n' "$number" "$label"
+    done
+    if [ -n "$dm_service" ]; then
+        echo
+        echo "Recommended: autologin to the user's existing graphical session."
+        echo "Its desktop and normal graphical stack remain installed and running."
+    fi
+    read -r -p "Setup [1]: " pick
+    pick=${pick:-1}
+    [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] &&
+        [ "$pick" -le "${#choices[@]}" ] || { echo "Invalid setup" >&2; exit 2; }
+    backend=${choices[$((pick - 1))]}
+fi
 
-    case "$GRUB_TIMEOUT_DETECTED" in
-        ''|0) ;;
-        *)
-            cat <<EOF
+if [ "$backend" = display-manager ] && [ -z "$dm_service" ]; then
+    echo "install.sh: no supported display manager is installed" >&2; exit 2
+fi
 
-GRUB currently waits ${GRUB_TIMEOUT_DETECTED}s. A zero-second hidden menu boots
-the cabinet immediately. Firmware-dependent recovery remains available by
-holding Shift or tapping Escape during early boot.
-EOF
-            ask "Hide the GRUB menu and set its timeout to zero?" Y && \
-                ZERO_GRUB_TIMEOUT=1
+default_user=""
+for uid in "${SUDO_UID:-}" "${PKEXEC_UID:-}"; do
+    [ -n "$uid" ] || continue
+    default_user=$(getent passwd "$uid" | cut -d: -f1 || true)
+    [ -n "$default_user" ] && break
+done
+[ -n "$default_user" ] || default_user=$(logname 2>/dev/null || true)
+if [ -z "$default_user" ] || [ "$default_user" = root ]; then
+    default_user=$(getent passwd | awk -F: '$3>=1000&&$3<65534&&$7!~/(nologin|false)$/ {print $1;exit}')
+fi
+read -r -p "Cabinet session user [${default_user}]: " session_user
+session_user=${session_user:-$default_user}
+session_uid=$(id -u "$session_user" 2>/dev/null) || { echo "Unknown user" >&2; exit 2; }
+[ "$session_uid" -ge 1000 ] || { echo "Cabinet user must be unprivileged (UID >= 1000)" >&2; exit 2; }
+
+checkout_writable=0
+if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$session_user" -- test -w "$ROOT" && checkout_writable=1
+    runuser -u "$session_user" -- test -w "$(dirname -- "$ROOT")" && checkout_writable=1
+    if [ "$checkout_writable" -eq 0 ] &&
+       [ -n "$(runuser -u "$session_user" -- find "$ROOT" -xdev -writable -print -quit 2>/dev/null)" ]; then
+        checkout_writable=1
+    fi
+fi
+if [ "$checkout_writable" -eq 1 ]; then
+    echo >&2
+    echo "SECURITY WARNING: $session_user can modify this checkout." >&2
+    echo "The root service will execute code from it on boot." >&2
+    echo "For a strict privilege boundary, install a root-owned checkout under /opt." >&2
+    ask "Continue and trust this session user to modify Nucore Portable?" Y || exit 2
+fi
+
+echo
+echo "Nucore launch configuration"
+read -r -p "Nucore-Portable config file [none]: " portable_config
+if [ -n "$portable_config" ]; then
+    case "$portable_config" in /*) ;; *) portable_config="$ROOT/$portable_config" ;; esac
+    portable_config=$(readlink -f -- "$portable_config") || {
+        echo "install.sh: portable config does not exist" >&2; exit 2;
+    }
+    [ -f "$portable_config" ] || {
+        echo "install.sh: portable config is not a regular file" >&2; exit 2;
+    }
+fi
+read -r -p "Game [swe1_14/rfm_15/auto] (swe1_14): " game
+game=${game:-swe1_14}
+case "$game" in swe1|swe1_14) game=swe1_14;; rfm|rfm_15) game=rfm_15;; auto);; *) exit 2;; esac
+flags=""
+ask "Use Pinbox?" N && flags="$flags --pinbox"
+ask "Enable production watchdog?" Y || flags="$flags --no-reboot"
+sdl12_compat=0
+sdl_display=auto
+if [ "$backend" = cage ]; then
+    echo "Cage is a native Wayland kiosk; SDL12-compat + Wayland is required."
+    flags="$flags --sdl12-compat --wayland"
+    sdl12_compat=1
+    sdl_display=wayland
+elif [ "$backend" = console ]; then
+    echo "Direct console uses native SDL 1.2/fbcon; SDL2/KMSDRM is not offered."
+elif ask "Use SDL12-compat?" N; then
+    flags="$flags --sdl12-compat"
+    sdl12_compat=1
+    case "$backend" in
+        display-manager|gamescope|weston)
+            echo
+            echo "SDL12-compat display path:"
+            echo "1. Native Wayland"
+            echo "2. Xwayland"
+            read -r -p "Display path [1]: " display_pick
+            case "${display_pick:-1}" in
+                1|wayland) sdl_display=wayland; flags="$flags --wayland" ;;
+                2|xwayland) sdl_display=xwayland; flags="$flags --xwayland" ;;
+                *) echo "Invalid SDL display path" >&2; exit 2 ;;
+            esac
             ;;
     esac
 fi
+ask "Use experimental ASIX libraries?" N && flags="$flags --asix"
+if ask "Start fullscreen?" Y; then video=-fullscreen; else video=-window; fi
+if [ "$backend" = console ]; then default_bpp=16; else default_bpp=32; fi
+read -r -p "Colour depth [$default_bpp] (16/32): " bpp; bpp=${bpp:-$default_bpp}
+case "$bpp" in 16|32);; *) echo "Expected 16 or 32" >&2; exit 2;; esac
+service_args="${flags# } $game $video -bpp $bpp"
+launch_args=()
+[ -n "$portable_config" ] && launch_args+=(--config "$portable_config")
+read -r -a guided_args <<< "$service_args"
+launch_args+=("${guided_args[@]}")
+[ "$backend" = console ] && launch_args=(--console "${launch_args[@]}")
 
-EXTRA_FLAGS=""
-[ $USE_PINBOX -eq 1 ] && EXTRA_FLAGS="--pinbox"
-[ $USE_NO_REBOOT -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --no-reboot"
-[ $USE_SDL12_COMPAT -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --sdl12-compat"
-[ $USE_ASIX -eq 1 ] && EXTRA_FLAGS="$EXTRA_FLAGS --asix"
-CONFIG_FLAG=""
-[ -n "$PORTABLE_CONFIG" ] && CONFIG_FLAG="--config=$PORTABLE_CONFIG"
-
-DO_AUTOSTART=1
-if [ "$INSTALL_MODE" = desktop ]; then
-    ask "Auto-launch on graphical login?" Y || DO_AUTOSTART=0
-fi
-
-# Autologin: pick the user GDM should log in automatically on boot.
-# Without this the user sits at the GDM password prompt forever before
-# nucore can attach to their session. Default to the human invoker (the
-# uid that launched ./install.sh — SUDO_UID / PKEXEC_UID / logname).
-DO_AUTOLOGIN=0
-DEFAULT_AUTOLOGIN_USER=""
-for cand_uid in "${SUDO_UID:-}" "${PKEXEC_UID:-}"; do
-    [ -n "$cand_uid" ] || continue
-    cand_name=$(getent passwd "$cand_uid" | cut -d: -f1) || true
-    [ -n "$cand_name" ] && { DEFAULT_AUTOLOGIN_USER="$cand_name"; break; }
-done
-if [ -z "$DEFAULT_AUTOLOGIN_USER" ]; then
-    DEFAULT_AUTOLOGIN_USER=$(logname 2>/dev/null || true)
-fi
-if [ -z "$DEFAULT_AUTOLOGIN_USER" ] || [ "$DEFAULT_AUTOLOGIN_USER" = "root" ]; then
-    # Fall back to the first uid >= 1000 with a real shell.
-    DEFAULT_AUTOLOGIN_USER=$(getent passwd \
-        | awk -F: '$3>=1000 && $3<65534 && $7 !~ /(nologin|false)$/ {print $1; exit}')
-fi
-
-if [ "$INSTALL_MODE" = desktop ] &&
-   ask "Enable display-manager autologin (GDM/SDDM/LightDM) so the box boots straight in?" Y; then
-    DO_AUTOLOGIN=1
-    read -r -p "Auto-login user [default: $DEFAULT_AUTOLOGIN_USER]: " AUTOLOGIN_IN
-    AUTOLOGIN_USER="${AUTOLOGIN_IN:-$DEFAULT_AUTOLOGIN_USER}"
-    if ! id "$AUTOLOGIN_USER" >/dev/null 2>&1; then
-        echo "    user '$AUTOLOGIN_USER' does not exist — autologin DISABLED"
-        DO_AUTOLOGIN=0
-    fi
-fi
-
-echo
-echo "About to apply:"
-echo "  portable config     : ${PORTABLE_CONFIG:-none}"
-if [ -n "$PORTABLE_CONFIG" ]; then
-    echo "  saved command line  : loaded first"
-    echo "  config words        : $(printf '%s\n' "$PORTABLE_CONFIG_WORDS" | paste -sd' ' -)"
-else
-    echo "  default game        : $DEFAULT_GAME"
-    echo "  emulator            : $([ $USE_PINBOX -eq 1 ] && echo pinbox || echo nucore)"
-    echo "  watchdog            : $([ $USE_NO_REBOOT -eq 1 ] && echo disabled || echo production)"
-    echo "  SDL                 : $([ $USE_SDL12_COMPAT -eq 1 ] && echo SDL12-compat || echo native SDL 1.2)"
-    echo "  FTDI library        : $([ $USE_ASIX -eq 1 ] && echo 'ASIX 0.1.0 (experimental)' || echo 'original Nucore')"
-fi
-echo "  autostart on login  : $DO_AUTOSTART"
-echo "  video               : $VIDEO_DESCRIPTION"
-if [ "$INSTALL_MODE" != desktop ]; then
-    echo "  boot console        : $([ "$QUIET_BOOT" -eq 1 ] && echo 'quiet/splash, journal only' || echo 'normal text output')"
-    if [ "$GRUB_CAN_UPDATE" -eq 1 ]; then
-        echo "  GRUB timeout        : $([ "$ZERO_GRUB_TIMEOUT" -eq 1 ] && echo 'hidden, 0 seconds' || echo "unchanged${GRUB_TIMEOUT_DETECTED:+ ($GRUB_TIMEOUT_DETECTED seconds detected)}")"
+maintenance=display-manager
+[ -n "$dm_service" ] || maintenance=getty
+if [ "$backend" != display-manager ]; then
+    if [ -n "$dm_service" ]; then
+        read -r -p "After Nucore exits [display-manager/getty] ($maintenance): " answer
+        maintenance=${answer:-$maintenance}
     else
-        echo "  GRUB configuration  : unsupported or unavailable; unchanged"
+        echo "After Nucore exits: password-backed tty1 login (no display manager detected)."
+        maintenance=getty
     fi
+    case "$maintenance" in display-manager|getty);; *) exit 2;; esac
 fi
-[ -n "$USER_SESSION_NAME" ] && \
-    echo "  default user services: $USER_SESSION_NAME (no login, no desktop)"
-case "$INSTALL_MODE" in
-    xorg-only)
-        echo "  boot path           : multi-user.target -> tty1 -> minimal Xorg -> Nucore"
-        echo "  maintenance fallback: $MAINTENANCE_MODE after Nucore/Xorg exits" ;;
-    console)
-        echo "  boot path           : multi-user.target -> tty1 -> native SDL fbcon"
-        echo "  scaling             : none" ;;
-    desktop)
-        echo "  display-manager autologin : $([ $DO_AUTOLOGIN -eq 1 ] && echo "yes ($AUTOLOGIN_USER)" || echo no)" ;;
-esac
-echo "  install path        : $SCRIPT_DIR (run from where it lives — no copy)"
+
+quiet_boot=0
+zero_grub_timeout=0
+ask "Use the distribution's quiet boot presentation?" Y && quiet_boot=1
+if command -v update-grub >/dev/null 2>&1; then
+    ask "Hide the GRUB menu and use a zero-second timeout?" Y && zero_grub_timeout=1
+fi
+
 echo
-ask "Proceed?" Y || { echo "aborted."; exit 0; }
+echo "About to install:"
+echo "  setup        : $backend"
+echo "  session user : $session_user (no privileges required)"
+echo "  launch       : $service_args"
+[ "$sdl_display" = auto ] || echo "  SDL display  : $sdl_display"
+echo "  config       : ${portable_config:-none}"
+echo "  maintenance  : $maintenance"
+ask "Proceed?" Y || exit 0
 
-WRAPPER="$SCRIPT_DIR/bin/nucore-as-root.sh"
-XORG_WRAPPER="$SCRIPT_DIR/bin/nucore-xorg-only.sh"
-USER_SESSION_WRAPPER="$SCRIPT_DIR/bin/nucore-user-session.sh"
-chmod 0755 "$WRAPPER" "$XORG_WRAPPER" "$USER_SESSION_WRAPPER" \
-    "$SCRIPT_DIR/start.sh" "$SCRIPT_DIR/bin/bundled.sh"
-
-# pinbox reads its sound bank from roms/<game>_pinbox.bin, but the bundle
-# only ships roms/<game>_nucore.bin. Mirror them so pinbox can boot
-# regardless of which fork the user picks now or later. Cheap no-op once
-# the copies exist.
-for src in "$SCRIPT_DIR"/roms/*_nucore.bin; do
-    [ -f "$src" ] || continue
-    dst="${src%_nucore.bin}_pinbox.bin"
-    [ -e "$dst" ] || cp -p -- "$src" "$dst"
-done
-
-UNIT=/etc/systemd/system/nucore.service
-if [ -n "$PORTABLE_CONFIG" ]; then
-    SERVICE_ARGS="$CONFIG_FLAG $VIDEO_ARGS"
-else
-    SERVICE_ARGS="$EXTRA_FLAGS $DEFAULT_GAME $VIDEO_ARGS"
+if [ "$sdl12_compat" -eq 1 ] && [ "$sdl_display" = wayland ] &&
+   ! "$ROOT/bin/wayland-mesa.sh" check; then
+    echo
+    echo "Native SDL2 Wayland needs the optional 32-bit Mesa rendering pack."
+    echo "It is excluded from the core repository because it expands to about 208 MiB."
+    echo "The verified 49 MiB archive comes from this project's GitHub Releases."
+    ask "Download and install the optional Wayland Mesa pack now?" Y || {
+        echo "Choose Xwayland instead, or install it later with:" >&2
+        echo "  $ROOT/bin/wayland-mesa.sh install" >&2
+        exit 2
+    }
+    "$ROOT/bin/wayland-mesa.sh" install
 fi
 
-if [ "$INSTALL_MODE" != desktop ]; then
-    if [ "$INSTALL_MODE" = xorg-only ]; then
-        MISSING_XORG=()
-        command -v Xorg >/dev/null 2>&1 || MISSING_XORG+=(xserver-xorg-core)
-        command -v xinit >/dev/null 2>&1 || MISSING_XORG+=(xinit)
-        [ -e /usr/lib/xorg/modules/input/libinput_drv.so ] || \
-            MISSING_XORG+=(xserver-xorg-input-libinput)
-        if [ "${#MISSING_XORG[@]}" -gt 0 ]; then
-            echo "Minimal Xorg packages required: ${MISSING_XORG[*]}"
-            ask "Install the minimal Xorg runtime now?" Y || exit 2
-            command -v apt-get >/dev/null 2>&1 || {
-                echo "install.sh: apt-get unavailable; install Xorg and xinit manually" >&2
-                exit 3
-            }
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                "${MISSING_XORG[@]}"
-        fi
-    fi
+missing=()
+case "$backend" in
+    gamescope)
+        command -v gamescope >/dev/null 2>&1 || [ -x /usr/games/gamescope ] || missing+=(gamescope)
+        ;;
+    cage)      command -v cage >/dev/null 2>&1 || missing+=(cage) ;;
+    weston)    command -v weston >/dev/null 2>&1 || missing+=(weston) ;;
+    xorg)
+        command -v Xorg >/dev/null 2>&1 || missing+=(xserver-xorg-core)
+        command -v xinit >/dev/null 2>&1 || missing+=(xinit)
+        [ -e /usr/lib/xorg/modules/input/libinput_drv.so ] || missing+=(xserver-xorg-input-libinput)
+        ;;
+esac
+if [ "$sdl12_compat" -eq 0 ] || [ "$sdl_display" = xwayland ]; then
+    case "$backend" in
+        gamescope|weston)
+            command -v Xwayland >/dev/null 2>&1 || missing+=(xwayland)
+            ;;
+    esac
+    case "$backend" in
+        display-manager|gamescope|weston|xorg)
+            command -v xhost >/dev/null 2>&1 || missing+=(x11-xserver-utils)
+            ;;
+    esac
+fi
+if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Missing distribution packages: ${missing[*]}"
+    ask "Install them with APT?" Y || exit 2
+    command -v apt-get >/dev/null 2>&1 || { echo "APT unavailable" >&2; exit 3; }
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
 
-    install -d -m 0755 "$STATE_DIR"
-    if [ ! -f "$STATE_DIR/previous-default-target" ]; then
-        systemctl get-default > "$STATE_DIR/previous-default-target"
-    fi
-    if [ ! -f "$STATE_DIR/getty-tty1-was-enabled" ]; then
-        systemctl is-enabled getty@tty1.service > "$STATE_DIR/getty-tty1-was-enabled" 2>/dev/null || true
-    fi
-    printf '%s\n' "$INSTALL_MODE" > "$STATE_DIR/install-mode"
+install -d -m 0755 "$STATE" "$CONF_DIR"
+[ -f "$STATE/previous-default-target" ] || systemctl get-default > "$STATE/previous-default-target"
+[ -f "$STATE/getty-tty1-was-enabled" ] ||
+    systemctl is-enabled getty@tty1.service > "$STATE/getty-tty1-was-enabled" 2>/dev/null || true
+printf '%s\n' "$backend" > "$STATE/install-mode"
 
-    GRUB_DROPIN_CHANGED=0
-    if [ "$QUIET_BOOT" -eq 1 ] || [ "$ZERO_GRUB_TIMEOUT" -eq 1 ]; then
-        install -d -m 0755 /etc/default/grub.d
-        if [ -e "$GRUB_DROPIN" ] &&
-           ! grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
-            echo "install.sh: refusing unrelated existing $GRUB_DROPIN" >&2
-            exit 3
-        fi
-        {
-            echo '# nucore-portable managed boot presentation'
-            if [ "$QUIET_BOOT" -eq 1 ]; then
-                cat <<'EOF'
+cat > "$CONF" <<EOF
+# Managed by Nucore Portable
+BACKEND=$backend
+SESSION_USER=$session_user
+SESSION_UID=$session_uid
+MAINTENANCE=$maintenance
+SDL12_COMPAT=$sdl12_compat
+SDL_DISPLAY=$sdl_display
+EOF
+chmod 0644 "$CONF"
+printf '%s\n' "${launch_args[@]}" > "$CONF_DIR/launch.args"
+chmod 0644 "$CONF_DIR/launch.args"
+
+chmod 0755 "$ROOT/start.sh" "$ROOT/bin/bundled.sh" \
+    "$ROOT/bin/nucore-session.sh" "$ROOT/bin/nucore-service.sh"
+
+if [ "$quiet_boot" -eq 1 ] || [ "$zero_grub_timeout" -eq 1 ]; then
+    install -d -m 0755 /etc/default/grub.d
+    if [ -e "$GRUB_DROPIN" ] &&
+       ! grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
+        echo "install.sh: refusing unrelated existing $GRUB_DROPIN" >&2
+        exit 3
+    fi
+    {
+        echo '# nucore-portable managed boot presentation'
+        if [ "$quiet_boot" -eq 1 ]; then
+            cat <<'EOF'
 for nucore_boot_arg in quiet loglevel=3 systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0; do
     case " $GRUB_CMDLINE_LINUX_DEFAULT " in
         *" $nucore_boot_arg "*) ;;
@@ -510,292 +314,134 @@ for nucore_boot_arg in quiet loglevel=3 systemd.show_status=false rd.udev.log_le
     esac
 done
 if command -v plymouth >/dev/null 2>&1; then
-    case " $GRUB_CMDLINE_LINUX_DEFAULT " in
-        *' splash '*) ;;
-        *) GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT splash" ;;
-    esac
+    case " $GRUB_CMDLINE_LINUX_DEFAULT " in *' splash '*) ;; *) GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT splash" ;; esac
 fi
 unset nucore_boot_arg
 EOF
-            fi
-            if [ "$ZERO_GRUB_TIMEOUT" -eq 1 ]; then
-                cat <<'EOF'
+        fi
+        if [ "$zero_grub_timeout" -eq 1 ]; then
+            cat <<'EOF'
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_TIMEOUT=0
 GRUB_RECORDFAIL_TIMEOUT=0
+GRUB_THEME=""
+GRUB_BACKGROUND=""
+GRUB_TERMINAL_OUTPUT=console
 EOF
-            fi
-        } > "$GRUB_DROPIN"
-        chmod 0644 "$GRUB_DROPIN"
-        GRUB_DROPIN_CHANGED=1
-    elif [ -f "$GRUB_DROPIN" ] &&
-         grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
-        rm -f "$GRUB_DROPIN"
-        GRUB_DROPIN_CHANGED=1
-    fi
-    if [ "$GRUB_DROPIN_CHANGED" -eq 1 ]; then
-        echo "[+] regenerating GRUB configuration"
-        update-grub
-    fi
-
-    if [ "$INSTALL_MODE" = xorg-only ]; then
-        DESCRIPTION="minimal Xorg cabinet"
-        EXEC_START="$XORG_WRAPPER $SERVICE_ARGS"
-        USER_UNIT_DEPS=""
-        USER_EXEC_PRE=""
-        if [ -n "$USER_SESSION_NAME" ]; then
-            USER_UNIT_DEPS="Wants=user@${USER_SESSION_UID}.service
-After=user@${USER_SESSION_UID}.service"
-            USER_EXEC_PRE="ExecStartPre=$USER_SESSION_WRAPPER $USER_SESSION_NAME"
         fi
-    else
-        DESCRIPTION="direct fbcon cabinet (advanced)"
-        EXEC_START="$SCRIPT_DIR/start.sh --console --no-root --no-inhibit $SERVICE_ARGS"
-        USER_UNIT_DEPS=""
-        USER_EXEC_PRE=""
-    fi
-
-    echo "[+] writing $INSTALL_MODE $UNIT"
-    cat > "$UNIT" <<EOF
-[Unit]
-Description=Pinball 2000 (nucore-portable, $DESCRIPTION)
-Documentation=file:$SCRIPT_DIR/README.md
-After=systemd-user-sessions.service getty-pre.target sound.target
-$USER_UNIT_DEPS
-Before=getty.target
-Conflicts=display-manager.service getty@tty1.service
-ConditionPathExists=/dev/tty0
-StartLimitBurst=3
-StartLimitIntervalSec=60
-
-[Service]
-Type=simple
-WorkingDirectory=$SCRIPT_DIR
-Environment=TERM=linux
-Environment=NUCORE_MAINTENANCE=$MAINTENANCE_MODE
-$USER_EXEC_PRE
-ExecStart=$EXEC_START
-Restart=no
-StandardInput=tty-force
-StandardOutput=$SERVICE_OUTPUT
-StandardError=$SERVICE_OUTPUT
-TTYPath=/dev/tty1
-TTYReset=yes
-TTYVHangup=yes
-TTYVTDisallocate=yes
-UtmpIdentifier=tty1
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl disable getty@tty1.service 2>/dev/null || true
-    systemctl enable nucore.service
-    systemctl set-default multi-user.target
-
-    echo
-    echo "=== $INSTALL_MODE install complete ==="
-    if [ "$INSTALL_MODE" = xorg-only ]; then
-        echo "Next boot: tty1 -> minimal Xorg -> Nucore."
-        echo "After Nucore/Xorg exits: $MAINTENANCE_MODE."
-    else
-        echo "Next boot: tty1 -> native SDL fbcon (no scaling)."
-    fi
-    echo "Watch logs: journalctl -u nucore -f"
-    echo "Reverse: $SCRIPT_DIR/uninstall.sh"
-    exit 0
+    } > "$GRUB_DROPIN"
+    chmod 0644 "$GRUB_DROPIN"
+    update-grub
 fi
 
-install -d -m 0755 "$STATE_DIR"
-printf '%s\n' desktop > "$STATE_DIR/install-mode"
-echo "[+] writing $UNIT"
-cat > "$UNIT" <<EOF
+if [ "$backend" = display-manager ]; then
+    # The normal remembered desktop session supplies its own compositor and
+    # publishes its display sockets through systemd --user.  Do not replace it
+    # with a project-specific X11 or Wayland session.
+    rm -f /usr/share/xsessions/nucore.desktop
+    rm -f /usr/share/wayland-sessions/nucore.desktop
+    rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
+else
+    rm -f /etc/xdg/autostart/nucore-cabinet.desktop
+    install -d -m 0755 /etc/systemd/system/getty@tty1.service.d
+    cat > /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $session_user --login-options '-f $session_user -s $ROOT/bin/nucore-session.sh' --noclear %I \$TERM
+TTYVTDisallocate=no
+Restart=no
+EOF
+fi
+
+# Configure autologin without replacing the user's remembered desktop session.
+if [ "$backend" = display-manager ]; then
+    case "$dm_service" in
+        *gdm*)
+            gdm_conf=/etc/gdm3/daemon.conf
+            [ -f "$gdm_conf" ] || gdm_conf=/etc/gdm/custom.conf
+            [ -f "$gdm_conf" ] || { echo "GDM config not found" >&2; exit 3; }
+            sed -i '/^# >>> nucore-portable autologin >>>$/,/^# <<< nucore-portable autologin <<<$/{d}' "$gdm_conf"
+            cat >> "$gdm_conf" <<EOF
+# >>> nucore-portable autologin >>>
+[daemon]
+AutomaticLoginEnable=true
+AutomaticLogin=$session_user
+# <<< nucore-portable autologin <<<
+EOF
+            ;;
+        *sddm*)
+            install -d -m 0755 /etc/sddm.conf.d
+            cat > /etc/sddm.conf.d/49-nucore.conf <<EOF
+[Autologin]
+User=$session_user
+Relogin=false
+EOF
+            ;;
+        *lightdm*)
+            install -d -m 0755 /etc/lightdm/lightdm.conf.d
+            cat > /etc/lightdm/lightdm.conf.d/49-nucore.conf <<EOF
+[Seat:*]
+autologin-user=$session_user
+autologin-user-timeout=0
+EOF
+            ;;
+        *) echo "Unsupported display manager: $dm_service" >&2; exit 3 ;;
+    esac
+fi
+
+if [ "$backend" = display-manager ]; then
+    unit_after="display-manager.service"
+    unit_wants="display-manager.service"
+    tty_directives="StandardInput=null"
+    install_target=graphical.target
+elif [ "$backend" = console ]; then
+    unit_after="getty@tty1.service"
+    unit_wants="getty@tty1.service"
+    tty_directives="StandardInput=tty-force
+TTYPath=/dev/$TTY
+TTYReset=yes
+TTYVTDisallocate=no"
+    install_target=multi-user.target
+else
+    unit_after="getty@tty1.service"
+    unit_wants="getty@tty1.service"
+    tty_directives="StandardInput=null"
+    install_target=multi-user.target
+fi
+
+cat > /etc/systemd/system/nucore.service <<EOF
 [Unit]
-Description=Pinball 2000 (nucore-portable, in-session as root)
-# Pulled in when the graphical stack is up. The wrapper then waits inside
-# its polling loop until a real user logs in and an active session exists.
-After=graphical.target
-Wants=graphical.target
-StartLimitBurst=3
+Description=Pinball 2000 (Nucore Portable session architecture)
+Documentation=file:$ROOT/README.md
+After=systemd-user-sessions.service sound.target $unit_after
+Wants=$unit_wants
 StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
-WorkingDirectory=$SCRIPT_DIR
-# No User= line: runs as root, gets CAP_SYS_RAWIO + CAP_SYS_NICE for free.
-# That is exactly what nucore needs for parallel-port ioperm and RT audio.
-ExecStart=$WRAPPER $SERVICE_ARGS
-# F1 / Esc → nucore exits cleanly → we DO NOT bounce back. User explicitly
-# asked for the desktop, so go to the desktop. To relaunch from a desktop
-# terminal: systemctl start nucore (no auth needed for owner of the unit
-# from the active session — systemd-logind allows it via polkit defaults).
-Restart=on-failure
-RestartSec=5
+WorkingDirectory=$ROOT
+ExecStart="$ROOT/bin/nucore-service.sh"
+Restart=no
+$tty_directives
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical.target
+WantedBy=$install_target
 EOF
 
 systemctl daemon-reload
-
-# Polkit rule: let any user in an active local session start/stop/restart
-# THIS ONE unit without password, from `systemctl start nucore` in their
-# terminal. Polkit ships with every Debian desktop (gnome-shell depends on
-# it) — this is a config file drop, not a package install. Without this
-# rule, relaunching from the desktop would pop a GUI auth dialog every
-# time, which contradicts the "no prompt ever, once installed" goal.
-RULES_DIR=/etc/polkit-1/rules.d
-if [ -d "$RULES_DIR" ] || mkdir -p "$RULES_DIR" 2>/dev/null; then
-    RULE="$RULES_DIR/49-nucore.rules"
-    echo "[+] writing $RULE (active-session user can manage nucore.service without auth)"
-    cat > "$RULE" <<'EOF'
-// Allow members of an active local session to start/stop/restart
-// nucore.service without a polkit password prompt. Scoped to that
-// single unit only.
-polkit.addRule(function(action, subject) {
-    if (action.id == "org.freedesktop.systemd1.manage-units" &&
-        action.lookup("unit") == "nucore.service" &&
-        subject.active && subject.local) {
-        return polkit.Result.YES;
-    }
-});
-EOF
-    chmod 0644 "$RULE"
+systemctl enable nucore.service
+if [ "$backend" = display-manager ]; then
+    systemctl set-default graphical.target
 else
-    echo "[!] polkit not present — relaunches via 'systemctl start nucore' will prompt."
-fi
-
-if [ "$DO_AUTOSTART" = 1 ]; then
-    systemctl enable nucore.service
-    echo "    enabled — will start at next graphical login."
-else
-    systemctl disable nucore.service 2>/dev/null || true
-    echo "    not enabled — start manually with: systemctl start nucore"
-fi
-
-# ── Display-manager autologin (GDM / SDDM / LightDM) ─────────────────────────
-# We write configs for ALL three display managers (drop-ins for SDDM/
-# LightDM, in-place patch for GDM if its config exists) so that autologin
-# survives the user later switching DE — `apt install kubuntu-desktop`
-# pulls in SDDM, our drop-in is already there waiting, autologin keeps
-# working with no re-run of install.sh required.
-# Each block is sentinel-fenced so uninstall.sh can strip only our edits.
-
-# ── per-DM autologin patchers ────────────────────────────────────────────────
-# All three use the same sentinel scheme so uninstall.sh can strip our
-# block without touching anything else the user may have configured.
-NUCORE_BEGIN='# >>> nucore-portable autologin >>>'
-NUCORE_END='# <<< nucore-portable autologin <<<'
-
-strip_block() {
-    local conf="$1" tmp
-    tmp=$(mktemp)
-    awk -v B="$NUCORE_BEGIN" -v E="$NUCORE_END" '
-        index($0,B)==1 { skip=1; next }
-        index($0,E)==1 { skip=0; next }
-        !skip { print }
-    ' "$conf" > "$tmp"
-    install -m 0644 "$tmp" "$conf"
-    rm -f "$tmp"
-}
-
-apply_gdm() {
-    # GDM: /etc/gdm3/daemon.conf (Debian/Ubuntu) or /etc/gdm/custom.conf
-    # (Fedora/RHEL/Arch). [daemon] section.
-    local conf="$1"
-    [ -f "$conf.nucore-bak" ] || cp -a "$conf" "$conf.nucore-bak"
-    strip_block "$conf"
-    cat >> "$conf" <<EOF
-$NUCORE_BEGIN
-[daemon]
-AutomaticLoginEnable=true
-AutomaticLogin=$AUTOLOGIN_USER
-$NUCORE_END
-EOF
-    echo "[+] autologin (GDM): $conf  -> $AUTOLOGIN_USER"
-}
-
-apply_sddm() {
-    # SDDM: drop-in in /etc/sddm.conf.d/. We do NOT touch /etc/sddm.conf
-    # because the distro may regenerate it. Drop-ins win over the main
-    # file. Session= is best-effort — Kubuntu uses 'plasma' (Wayland) /
-    # 'plasmax11', Manjaro/openSUSE 'plasma.desktop'. Leaving Session=
-    # blank lets SDDM pick its built-in default, which works fine.
-    install -d -m 0755 /etc/sddm.conf.d
-    local conf=/etc/sddm.conf.d/49-nucore.conf
-    cat > "$conf" <<EOF
-$NUCORE_BEGIN
-[Autologin]
-User=$AUTOLOGIN_USER
-Relogin=false
-$NUCORE_END
-EOF
-    chmod 0644 "$conf"
-    echo "[+] autologin (SDDM): $conf  -> $AUTOLOGIN_USER"
-}
-
-apply_lightdm() {
-    # LightDM: drop-in in /etc/lightdm/lightdm.conf.d/. [Seat:*] applies
-    # to every seat. autologin-user-timeout=0 makes the login instant
-    # (default is sometimes 10s with a "click to abort" countdown on
-    # Lubuntu/Xubuntu).
-    install -d -m 0755 /etc/lightdm/lightdm.conf.d
-    local conf=/etc/lightdm/lightdm.conf.d/49-nucore.conf
-    cat > "$conf" <<EOF
-$NUCORE_BEGIN
-[Seat:*]
-autologin-user=$AUTOLOGIN_USER
-autologin-user-timeout=0
-$NUCORE_END
-EOF
-    chmod 0644 "$conf"
-    # The 'autologin' group is required for autologin to take effect on
-    # Debian/Ubuntu LightDM (PAM uses pam_succeed_if to gate it).
-    if getent group autologin >/dev/null 2>&1; then
-        usermod -aG autologin "$AUTOLOGIN_USER" 2>/dev/null || true
-    else
-        groupadd autologin 2>/dev/null || true
-        usermod -aG autologin "$AUTOLOGIN_USER" 2>/dev/null || true
-    fi
-    echo "[+] autologin (LightDM): $conf  -> $AUTOLOGIN_USER"
-}
-
-if [ "$DO_AUTOLOGIN" = 1 ]; then
-    # Future-proofing: write configs for ALL three display managers, even
-    # the ones not currently installed. The drop-ins are inert until the
-    # corresponding DM reads them, so writing them ahead of time costs
-    # nothing and means autologin keeps working if the user later does
-    # `apt install kubuntu-desktop` (pulls in SDDM) or installs LightDM.
-    #
-    # GDM is the one exception: its config files (/etc/gdm3/daemon.conf,
-    # /etc/gdm/custom.conf) are owned by the gdm3/gdm package and only
-    # exist if that package is installed — we cannot pre-create them in
-    # /etc/gdm3/ because the directory itself doesn't exist without the
-    # package. So GDM autologin only kicks in if GDM is installed at the
-    # time install.sh runs OR at the time the user later runs gdm for
-    # the first time (in which case re-running install.sh fixes it).
-    for conf in /etc/gdm3/daemon.conf /etc/gdm/custom.conf; do
-        [ -f "$conf" ] && apply_gdm "$conf"
-    done
-    # SDDM and LightDM use drop-in directories we can safely create even
-    # when the DM isn't installed yet — the directory itself is harmless,
-    # and the DM will pick up the drop-in the first time it's invoked.
-    apply_sddm
-    apply_lightdm
-    if ! [ -f /etc/gdm3/daemon.conf ] && ! [ -f /etc/gdm/custom.conf ]; then
-        echo "[i] note: GDM not installed; if you switch to a GNOME desktop"
-        echo "    later, re-run ./install.sh to enable GDM autologin too."
-    fi
+    systemctl unmask getty@tty1.service
+    systemctl enable getty@tty1.service
+    systemctl set-default multi-user.target
 fi
 
 echo
-echo "=== install complete ==="
-echo "Test now without rebooting (from inside your graphical session):"
-echo "    systemctl start nucore"
-echo "Watch logs:"
-echo "    journalctl -u nucore -f"
-echo "Reverse all of the above:"
-echo "    $SCRIPT_DIR/uninstall.sh"
+echo "Installed: real $session_user PAM/login session -> $backend -> root nucore.service"
+echo "Next boot will use the new cabinet session architecture."
+echo "Logs: journalctl -u nucore -f"

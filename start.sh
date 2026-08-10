@@ -1,8 +1,8 @@
 #!/bin/bash
 # start.sh — quick test launcher for nucore-portable.
 #
-# Usage: ./start.sh [--no-reboot] [--pinbox] [--asix] [--sdl12-compat]
-#                   [--console]
+# Usage: ./start.sh [--no-reboot] [--no-runner] [--pinbox] [--asix] [--sdl12-compat]
+#                   [--wayland|--xwayland] [--console]
 #                   [--no-shim] [--no-audio-shim] [--no-sigio-shim]
 #                   [--config FILE]
 #                   [--] [game] [extra args...]
@@ -15,6 +15,9 @@
 #   --no-reboot   use the dying-process variants (runrd + nucore_nwd / pinbox_nwd).
 #                 Crashes exit cleanly instead of triggering a host reboot —
 #                 use this for development / patching outside a real cabinet.
+#   --no-runner   launch the emulator binary directly through the bundle.
+#                 Implies --no-reboot so a failure exits instead of rebooting
+#                 the host. Useful for separating emulator and runner behaviour.
 #   --pinbox      target the pinbox fork instead of nucore.
 #                 Combined matrix:
 #                     (default)               run        + nucore
@@ -27,9 +30,11 @@
 #   --sdl12-compat
 #                 EXPERIMENTAL: translate the SDL 1.2 ABI to bundled SDL 2.
 #                 The proven native SDL 1.2 path remains the default.
-#   --console     ADVANCED: allow native SDL 1.2 to open tty/fbcon directly.
-#                 Refuses graphical sessions and cannot be combined with
-#                 --sdl12-compat. Dedicated 640x480-capable displays only.
+#   --wayland     with SDL12-compat, use SDL2's native Wayland backend.
+#   --xwayland    with SDL12-compat, use SDL2's X11 backend through Xwayland.
+#   --console     ADVANCED: allow SDL to use a direct-display backend.
+#                 Refuses active graphical sessions, but does not force fbcon:
+#                 native SDL may choose fbcon and SDL2 may choose KMSDRM.
 #   --no-shim     EXPERIMENTAL: do not preload sigio_fix.so. Safe only for
 #                 testing; the real cabinet RTC/SIGIO path is unverified.
 #   --no-audio-shim
@@ -60,16 +65,16 @@
 # Privilege escalation:
 #   nucore needs CAP_SYS_RAWIO (parallel-port ioperm) and CAP_SYS_NICE
 #   (real-time audio scheduling). start.sh tries, in order:
-#     1. nothing — if already launched with the right caps (e.g. from the
-#        systemd kiosk unit installed by install.sh, which uses
-#        AmbientCapabilities), no escalation is performed.
+#     1. nothing — when already root or launched with the required capability
+#        (the installed system service runs as root), no escalation is done.
 #     2. run0   — modern, polkit-based (systemd >=256 / Debian 13 trixie).
 #                 Pops a proper GUI auth dialog. Default on stock Debian 13
 #                 where the user is not in the sudoers file.
 #     3. pkexec — polkit fallback (older systems with policykit-1).
 #     4. sudo   — classic; works if the user is in the sudoers file.
 #   In all three cases we explicitly forward DISPLAY / XAUTHORITY /
-#   WAYLAND_DISPLAY / XDG_RUNTIME_DIR / HOME across the privilege boundary
+#   WAYLAND_DISPLAY / XDG_RUNTIME_DIR / HOME and explicitly supplied SDL
+#   video overrides across the privilege boundary
 #   (run0 --setenv=, sudo --preserve-env=, pkexec env VAR=val ...) so SDL
 #   keeps talking to your existing X/Wayland session and doesn't fall back
 #   to direct framebuffer rendering (which would freeze the compositor).
@@ -136,9 +141,11 @@ fi
 set -- "${CONFIG_WORDS[@]}" "${CLI_WORDS[@]}"
 
 NO_REBOOT=0
+NO_RUNNER=0
 PINBOX=0
 ASIX=0
 SDL12_COMPAT=0
+SDL_DISPLAY=auto
 ALLOW_CONSOLE=0
 USE_SHIM=1
 SHIM_AUDIO=1
@@ -149,9 +156,12 @@ USE_INHIBIT=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-reboot)   NO_REBOOT=1;   shift ;;
+        --no-runner)   NO_RUNNER=1; NO_REBOOT=1; shift ;;
         --pinbox)      PINBOX=1;      shift ;;
         --asix)        ASIX=1;        shift ;;
         --sdl12-compat) SDL12_COMPAT=1; shift ;;
+        --wayland)     SDL_DISPLAY=wayland; shift ;;
+        --xwayland)    SDL_DISPLAY=xwayland; shift ;;
         --console)     ALLOW_CONSOLE=1; shift ;;
         --no-shim)     USE_SHIM=0;    shift ;;
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
@@ -171,8 +181,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ "$ALLOW_CONSOLE" -eq 1 ] && [ "$SDL12_COMPAT" -eq 1 ]; then
-    echo "start.sh: --console supports native SDL 1.2 only; remove --sdl12-compat" >&2
+if [ "$SDL_DISPLAY" != auto ] && [ "$SDL12_COMPAT" -ne 1 ]; then
+    echo "start.sh: --$SDL_DISPLAY requires --sdl12-compat" >&2
     exit 2
 fi
 
@@ -199,8 +209,10 @@ else
     RUNNER=run;       BINARY=nucore
 fi
 
-# Sanity-check the chosen pair exists.
-for f in "$RUNNER" "$BINARY"; do
+# Sanity-check everything that will actually execute.
+CHECK_FILES=("$BINARY")
+[ "$NO_RUNNER" -eq 1 ] || CHECK_FILES+=("$RUNNER")
+for f in "${CHECK_FILES[@]}"; do
     if [ ! -x "$SCRIPT_DIR/bin/$f" ]; then
         echo "start.sh: missing bin/$f for selected mode" >&2
         exit 3
@@ -234,11 +246,12 @@ esac
 # explicit user arguments remain cumulative and follow it.
 ARGS=(-nowatermark "$@")
 
-echo "+ mode=$MODE  runner=$RUNNER  binary=$BINARY  game=$GAME  portable_config=${PORTABLE_CONFIG:-none}  args=${ARGS[*]}"
+RUNNER_LABEL=$RUNNER
+[ "$NO_RUNNER" -eq 1 ] && RUNNER_LABEL=none
+echo "+ mode=$MODE  display=$SDL_DISPLAY  runner=$RUNNER_LABEL  binary=$BINARY  game=$GAME  portable_config=${PORTABLE_CONFIG:-none}  args=${ARGS[*]}"
 
 # ── escalate via sudo (single, simple path) ─────────────────────────────────
-# Already root? Or already have CAP_SYS_RAWIO in our effective set
-# (e.g. systemd unit with AmbientCapabilities)? Then run direct.
+# Already root, or already have CAP_SYS_RAWIO in our effective set? Run direct.
 have_caps() {
     [ "$EUID" -eq 0 ] && return 0
     if command -v capsh >/dev/null 2>&1; then
@@ -253,6 +266,9 @@ have_caps() {
 }
 
 BUNDLE_OPTIONS=()
+[ "$NO_RUNNER" -eq 1 ] && BUNDLE_OPTIONS+=(--no-runner)
+[ "$SDL_DISPLAY" = wayland ] && BUNDLE_OPTIONS+=(--wayland)
+[ "$SDL_DISPLAY" = xwayland ] && BUNDLE_OPTIONS+=(--xwayland)
 [ "$ALLOW_CONSOLE" -eq 1 ] && BUNDLE_OPTIONS+=(--console)
 [ "$USE_SHIM" -eq 0 ] && BUNDLE_OPTIONS+=(--no-shim)
 [ "$SHIM_AUDIO" = 0 ] && BUNDLE_OPTIONS+=(--no-audio-shim)
@@ -292,13 +308,15 @@ fi
 # 1:1-top-left + GNOME freeze you saw earlier with vanilla run0/pkexec.
 #
 # All three escalators below preserve those vars explicitly:
-#   • run0   --setenv=VAR              (inherit value from caller)
+#   • run0   env VAR=value ...         (applied after its PAM session)
 #   • sudo   --preserve-env=VAR,...    (whitelist)
 #   • pkexec env VAR=val ... cmd       (pkexec strips env, so we re-set it
 #                                       inside the elevated shell)
 # Root can read the user's $XAUTHORITY cookie file directly (root reads
 # anything), so the X auth handshake just works.
-PRESERVE_VARS=(DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR HOME)
+PRESERVE_VARS=(DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR HOME \
+               SDL_VIDEODRIVER SDL_RENDER_DRIVER \
+               SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR)
 
 pick_escalator() {
     case "$ROOT_PREF" in
@@ -330,8 +348,8 @@ start.sh: cannot escalate privileges and current process lacks CAP_SYS_RAWIO.
 nucore needs raw I/O access for the parallel port and real-time scheduling.
 Pick one of these:
   • Run the kiosk installer once: sudo ./install.sh
-    (sets up a systemd unit with AmbientCapabilities — no escalation tool
-     needed at runtime. RECOMMENDED for cabinet kiosk mode.)
+    (sets up a root system service — no escalation tool is needed at runtime.
+     RECOMMENDED for cabinet mode.)
   • Install run0 (systemd >=256, default on Debian 13 trixie),
     or install policykit-1 (pkexec), or add yourself to the sudoers file.
   • Force a specific tool: ./start.sh --root=run0|pkexec|sudo
@@ -343,11 +361,12 @@ fi
 echo "+ escalating with: $ESC (preserving ${PRESERVE_VARS[*]})"
 case "$ESC" in
     run0)
-        SETENV=()
+        ENVARGS=()
         for v in "${PRESERVE_VARS[@]}"; do
-            [ -n "${!v+x}" ] && SETENV+=(--setenv="$v")
+            [ -n "${!v+x}" ] && ENVARGS+=("$v=${!v}")
         done
-        exec "${INHIBIT[@]}" run0 --description="nucore-portable" "${SETENV[@]}" -- "${CMD[@]}"
+        exec "${INHIBIT[@]}" run0 --description="nucore-portable" -- \
+            /usr/bin/env "${ENVARGS[@]}" "${CMD[@]}"
         ;;
     sudo)
         # Build comma-separated whitelist of vars we actually have set.

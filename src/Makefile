@@ -1,12 +1,9 @@
-# Build the LD_PRELOAD shim that makes the legacy 32-bit nucore/pinbox
-# binaries run cleanly on modern x86_64 Linux. See sigio_fix.c for the
-# full theory; in one sentence: it stops the RTC/SIGIO storm from
-# corrupting signal-handler stacks and starving the SDL_mixer audio
-# callback, both of which would otherwise crash the emulator within
-# seconds on any post-2010 kernel + glibc.
+# Build the two small LD_PRELOAD adapters maintained by Nucore Portable:
+# sigio_fix.so for the legacy signal/audio path, and sdl12_wayland_fix.so for
+# SDL12-compat's native-Wayland presentation path.
 #
 # Usage:
-#   make            # builds ../bin/sigio_fix.so
+#   make            # builds both adapters in ../bin/
 #   make clean
 #
 # Requirements (Debian/Ubuntu):
@@ -15,21 +12,24 @@
 #   sudo apt install gcc-multilib libc6-dev-i386
 # (Fedora: glibc-devel.i686 ; Arch: lib32-glibc + multilib gcc.)
 #
-# The shipped ../bin/sigio_fix.so was built with this Makefile; rebuild
-# only if you modify sigio_fix.c.
+# The shipped binaries were built with this Makefile; rebuild only after
+# changing their corresponding source.
 
 CC      ?= gcc
 CFLAGS  ?= -m32 -shared -fPIC -O1 -Wall
 LDLIBS  ?= -ldl -lpthread
 
-OUT     := ../bin/sigio_fix.so
-SRC     := sigio_fix.c
+SIGIO_OUT         := ../bin/sigio_fix.so
+SDL12_WAYLAND_OUT := ../bin/sdl12_wayland_fix.so
 
 .PHONY: all clean
-all: $(OUT)
+all: $(SIGIO_OUT) $(SDL12_WAYLAND_OUT)
 
-$(OUT): $(SRC)
+$(SIGIO_OUT): sigio_fix.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
+$(SDL12_WAYLAND_OUT): sdl12_wayland_fix.c
+	$(CC) -m32 -shared -fPIC -nostdlib -o $@ $<
+
 clean:
-	rm -f $(OUT)
+	rm -f $(SIGIO_OUT) $(SDL12_WAYLAND_OUT)

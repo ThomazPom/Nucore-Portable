@@ -25,3 +25,7 @@ Thumbs.db
 update/pin2000_50069_0210_*
 update/pin2000_50070_0250_*
 update/pin2000_50070_0260_*
+
+# Optional 32-bit Mesa runtime downloaded from the project's GitHub Releases.
+# It is deliberately not part of the core repository/bundle.
+bundlex86/optional/wayland-mesa-i386/
