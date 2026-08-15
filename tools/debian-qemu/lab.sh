@@ -196,7 +196,7 @@ EXPECT_EOF
 }
 
 test_install() {
-    local backend=${1:-xorg} answers cabinet_uid
+    local backend=${1:-xorg} answers cabinet_uid maintenance_session
     case "$backend" in xorg|console|gamescope|cage|weston) ;; *) die "unsupported stripped-guest backend: $backend" ;; esac
     reset_overlay
     start_overlay
@@ -229,9 +229,15 @@ test_install() {
         # Nucore service alone is not sufficient evidence of a working login.
         ssh_guest "test -s /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log && grep -q 'modeset(0)' /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log"
     fi
+    # Reproduce uninstall from the post-game maintenance state. Keep a real
+    # human tty1 login open: uninstall must remove only nucore-cabinet and must
+    # never stop the getty/session which may be invoking run0 itself.
+    ssh_guest 'systemctl stop nucore.service; install -d -m 0755 /run/systemd/system/getty@tty1.service.d; printf "%s\n" "[Service]" "ExecStart=" "ExecStart=-/sbin/agetty --autologin cabinet --noissue --noclear %I \$TERM" > /run/systemd/system/getty@tty1.service.d/51-nucore-lab-human.conf; systemctl daemon-reload; systemctl restart getty@tty1.service; for i in $(seq 1 50); do loginctl list-sessions --no-legend | awk '\''$3 == "cabinet" && $7 == "tty1" { found=1 } END { exit !found }'\'' && exit 0; sleep .1; done; exit 1'
+    maintenance_session=$(ssh_guest "loginctl list-sessions --no-legend | awk '\$3 == \"cabinet\" && \$7 == \"tty1\" { print \$1; exit }'")
+    [ -n "$maintenance_session" ] || die "maintenance tty1 login was not created"
     cabinet_uid=$(ssh_guest 'id -u nucore-cabinet')
     ssh_guest "cd /opt/Nucore-Portable && ./uninstall.sh"
-    ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && ! getent passwd nucore-cabinet >/dev/null && ! loginctl list-sessions --no-legend | grep -qw nucore-cabinet && ! systemctl is-active --quiet user@${cabinet_uid}.service && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && systemctl is-active --quiet getty@tty1.service"
+    ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && ! getent passwd nucore-cabinet >/dev/null && ! loginctl list-sessions --no-legend | grep -qw nucore-cabinet && ! systemctl is-active --quiet user@${cabinet_uid}.service && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && systemctl is-active --quiet getty@tty1.service && test \"\$(loginctl show-session '$maintenance_session' -p Active --value)\" = yes; rm -f /run/systemd/system/getty@tty1.service.d/51-nucore-lab-human.conf; rmdir /run/systemd/system/getty@tty1.service.d 2>/dev/null || true; systemctl daemon-reload"
     stop_vm
     echo "PASS: stripped Debian install/uninstall ($backend)"
 }

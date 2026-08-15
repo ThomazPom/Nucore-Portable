@@ -35,24 +35,24 @@ systemctl stop nucore.service    2>/dev/null || true
 systemctl disable nucore.service 2>/dev/null || true
 # Explicitly close the project account through logind before releasing tty1.
 # The service normally completed this barrier already; repeat it idempotently
-# so uninstall also handles a failed or previously killed service safely.
+# so uninstall also handles a failed or previously killed service safely. Do
+# not stop getty@tty1 here: after a normal game exit it belongs to the human
+# maintenance login which may be running this very uninstaller.
 if [ "$CABINET_USER" = nucore-cabinet ] && getent passwd "$CABINET_USER" >/dev/null; then
     CABINET_UID=$(id -u "$CABINET_USER")
     loginctl terminate-user "$CABINET_USER" 2>/dev/null || true
-    systemctl stop getty@tty1.service 2>/dev/null || true
     SESSION_END_WAIT=0
     while [ "$SESSION_END_WAIT" -lt 100 ]; do
         CABINET_SESSIONS=$(loginctl show-user "$CABINET_USER" -p Sessions --value 2>/dev/null || true)
         if [ -z "$CABINET_SESSIONS" ] &&
-           ! systemctl is-active --quiet "user@${CABINET_UID}.service" 2>/dev/null &&
-           ! systemctl is-active --quiet getty@tty1.service 2>/dev/null; then
+           ! systemctl is-active --quiet "user@${CABINET_UID}.service" 2>/dev/null; then
             break
         fi
         SESSION_END_WAIT=$((SESSION_END_WAIT + 1))
         sleep 0.1
     done
     if [ "$SESSION_END_WAIT" -ge 100 ]; then
-        echo "uninstall.sh: cabinet login did not terminate; refusing to release tty1" >&2
+        echo "uninstall.sh: dedicated cabinet login did not terminate; refusing removal" >&2
         exit 3
     fi
 fi
