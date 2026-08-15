@@ -59,6 +59,11 @@ This repository has only one installer: the root-level `./install.sh` shown
 above. The obsolete original Nucore installer and its `exec_nucore.service`
 layout are no longer included.
 
+Maintainers can reproduce a stripped Debian 13 netinstall and exercise the
+installer repeatedly with disposable qcow2 overlays; see
+[`tools/debian-qemu/`](tools/debian-qemu/README.md). The sealed post-netinst
+base is never modified by a test.
+
 The installer presents one flat choice of cabinet host:
 
 | Choice | Session path | Role |
