@@ -22,6 +22,27 @@ if [ "${1:-}" = --login ]; then
     exec /bin/login -f "$session_user"
 fi
 
+# The account remains configured with this wrapper so the next boot can enter
+# the cabinet session again.  For the remainder of a boot where Nucore or its
+# backend exited, the root service places an ephemeral marker. A subsequent
+# password-backed login then receives the account's recorded original shell
+# instead of recursively relaunching the failed cabinet backend.
+MAINTENANCE_MARKER=/run/nucore-portable/maintenance-login
+STATE_DIR=/var/lib/nucore-portable
+if [ -e "$MAINTENANCE_MARKER" ] &&
+   [ -r "$STATE_DIR/login-shell-user" ] &&
+   [ -r "$STATE_DIR/original-login-shell" ]; then
+    recorded_user=$(sed -n '1p' "$STATE_DIR/login-shell-user")
+    original_shell=$(sed -n '1p' "$STATE_DIR/original-login-shell")
+    if [ "$recorded_user" = "$(id -un)" ]; then
+        case "$original_shell" in
+            /*) [ -x "$original_shell" ] && exec "$original_shell" -l ;;
+        esac
+        echo "nucore-session: recorded maintenance shell is unavailable" >&2
+        exit 4
+    fi
+fi
+
 client_main() {
     shift
     nested_host=0

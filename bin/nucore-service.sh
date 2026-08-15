@@ -42,6 +42,8 @@ start_maintenance() {
         # Replace cabinet autologin for the remainder of this boot with an
         # ordinary password-backed prompt. This is also the safe fallback when
         # a selected display backend cannot initialize.
+        install -d -m 0755 /run/nucore-portable
+        install -m 0644 /dev/null /run/nucore-portable/maintenance-login
         install -d -m 0755 /run/systemd/system/getty@tty1.service.d
         cat > /run/systemd/system/getty@tty1.service.d/50-nucore-maintenance.conf <<'EOF'
 [Service]

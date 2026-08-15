@@ -237,7 +237,9 @@ autologin on tty1, and temporarily select the project session host as the
 account's login shell. They remember the original shell and previous
 target/getty state. On normal game exit they can start the installed display
 manager or leave a tty login for maintenance. Administrative service stops do
-not trigger that fallback.
+not trigger that fallback. A root-owned marker under `/run` makes that
+password-backed maintenance login enter the recorded original shell instead
+of relaunching the cabinet backend; `/run` is cleared for the next boot.
 
 During cabinet startup, tty1 remains the session's controlling terminal, while
 `agetty --skip-login` avoids printing an automatic-login prompt. A narrow
