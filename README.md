@@ -137,6 +137,13 @@ for this profile and lets it discover fbcon. SDL2/KMSDRM remains a manual resear
 tested Intel/Kali host it crashed while changing display mode and left the VT
 in graphics mode, so it is not offered as a cabinet configuration.
 
+For direct console, the installer can make a best-effort `640×480` request
+through GRUB and the kernel `video=` parameter. GRUB retains an automatic
+fallback, and firmware, DRM/KMS, the GPU driver or a fixed-mode panel may
+reject the request and keep another mode. The login session continues to own
+tty1; native SDL fbcon opens `/dev/fb0` and allocates its own VT rather than
+having the separate root service force ownership of tty1.
+
 The standalone wrappers avoid selecting a DRM backend or Wayland socket name
 for Gamescope and Weston. With inherited parent displays cleared, those
 compositors perform their normal standalone backend discovery and publish the

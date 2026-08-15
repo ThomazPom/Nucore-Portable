@@ -6,7 +6,6 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STATE=/var/lib/nucore-portable
 CONF_DIR=/etc/nucore-portable
 CONF=$CONF_DIR/session.conf
-TTY=tty1
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
 BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
@@ -222,6 +221,17 @@ fi
 
 quiet_boot=0
 zero_grub_timeout=0
+console_640=0
+if [ "$backend" = console ]; then
+    if command -v update-grub >/dev/null 2>&1; then
+        echo
+        echo "GRUB and the kernel can request a 640x480 framebuffer."
+        echo "Firmware, DRM/KMS, the GPU driver or the panel may refuse it and keep another mode."
+        ask "Request a 640x480 framebuffer at boot?" Y && console_640=1
+    else
+        echo "update-grub is unavailable; framebuffer resolution will remain driver-selected." >&2
+    fi
+fi
 ask "Use the distribution's quiet boot presentation?" Y && quiet_boot=1
 if command -v update-grub >/dev/null 2>&1; then
     ask "Hide the GRUB menu and use a zero-second timeout?" Y && zero_grub_timeout=1
@@ -237,6 +247,8 @@ echo "  launch       : $service_args"
 [ "$sdl_display" = auto ] || echo "  SDL display  : $sdl_display"
 echo "  config       : ${portable_config:-none}"
 echo "  maintenance  : $maintenance"
+[ "$backend" != console ] || \
+    echo "  framebuffer  : $([ "$console_640" -eq 1 ] && echo 'request 640x480 (driver may refuse)' || echo 'driver-selected')"
 ask "Proceed?" Y || exit 0
 
 apt_source_created=0
@@ -439,7 +451,8 @@ chmod 0644 "$CONF_DIR/launch.args"
 chmod 0755 "$ROOT/start.sh" "$ROOT/bin/bundled.sh" \
     "$ROOT/bin/nucore-session.sh" "$ROOT/bin/nucore-service.sh"
 
-if [ "$quiet_boot" -eq 1 ] || [ "$zero_grub_timeout" -eq 1 ]; then
+if [ "$quiet_boot" -eq 1 ] || [ "$zero_grub_timeout" -eq 1 ] ||
+   [ "$console_640" -eq 1 ]; then
     install -d -m 0755 /etc/default/grub.d
     if [ -e "$GRUB_DROPIN" ] &&
        ! grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
@@ -470,6 +483,19 @@ GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_THEME=""
 GRUB_BACKGROUND=""
 GRUB_TERMINAL_OUTPUT=console
+EOF
+        fi
+        if [ "$console_640" -eq 1 ]; then
+            cat <<'EOF'
+# Best-effort direct-console mode request. GRUB has a safe automatic fallback,
+# and the kernel display driver remains free to reject an unsupported mode.
+GRUB_GFXMODE=640x480,auto
+GRUB_GFXPAYLOAD_LINUX=keep
+GRUB_TERMINAL_OUTPUT=gfxterm
+case " $GRUB_CMDLINE_LINUX_DEFAULT " in
+    *' video=640x480 '*) ;;
+    *) GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT video=640x480" ;;
+esac
 EOF
         fi
     } > "$GRUB_DROPIN"
@@ -565,15 +591,10 @@ if [ "$backend" = display-manager ]; then
     unit_wants="display-manager.service"
     tty_directives="StandardInput=null"
     install_target=graphical.target
-elif [ "$backend" = console ]; then
-    unit_after="getty@tty1.service"
-    unit_wants="getty@tty1.service"
-    tty_directives="StandardInput=tty-force
-TTYPath=/dev/$TTY
-TTYReset=yes
-TTYVTDisallocate=no"
-    install_target=multi-user.target
 else
+    # The real PAM/login session owns tty1 for every standalone backend.
+    # Native SDL fbcon opens fb0 and allocates its own VT; forcing tty1 into
+    # the separate root service races login and causes systemd to deliver HUP.
     unit_after="getty@tty1.service"
     unit_wants="getty@tty1.service"
     tty_directives="StandardInput=null"

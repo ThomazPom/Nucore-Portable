@@ -207,7 +207,7 @@ test_install() {
     # game, Pinbox, watchdog, optional SDL/ASIX, fullscreen, bpp, maintenance,
     # quiet boot, zero GRUB, proceed, and any backend package installation.
     case "$backend" in
-        console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\n' ;;
+        console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\ny\n' ;;
         cage) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n32\ny\ny\ny\ny\ny\n' ;;
         gamescope) answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\ny\n' ;;
         *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\n' ;;
@@ -228,6 +228,12 @@ test_install() {
         # Prove the backend process actually ran. A cleanly exited ROM-less
         # Nucore service alone is not sufficient evidence of a working login.
         ssh_guest "test -s /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log && grep -q 'modeset(0)' /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log"
+    fi
+    if [ "$backend" = console ]; then
+        # QEMU's bochs DRM driver supports the requested mode. Prove both that
+        # GRUB passed it and that native SDL selected fbcon without stealing
+        # tty1 from the PAM/login session.
+        ssh_guest 'grep -qw video=640x480 /proc/cmdline; test "$(cat /sys/class/graphics/fb0/virtual_size)" = 640,480; ! systemctl cat nucore.service | grep -q tty-force; for i in $(seq 1 100); do pid=$(pgrep -f "/bin/nucore " | head -n1); if [ -n "$pid" ] && readlink /proc/$pid/fd/* 2>/dev/null | grep -qx /dev/fb0; then exit 0; fi; sleep .1; done; exit 1'
     fi
     # Reproduce uninstall from the post-game maintenance state. Keep a real
     # human tty1 login open: uninstall must remove only nucore-cabinet and must
