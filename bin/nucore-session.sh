@@ -7,42 +7,6 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 CONF=/etc/nucore-portable/session.conf
 
-# agetty calls this mode before /bin/login. Redirect the complete automatic
-# login/PAM/backend stream before login attaches it directly to the cabinet VT.
-# /bin/login still owns authentication, PAM, logind and session creation.
-if [ "${1:-}" = --login ]; then
-    session_user=${2:-}
-    session_uid=$(id -u "$session_user" 2>/dev/null) || exit 3
-    [ "$session_uid" -ge 1000 ] || exit 3
-    exec > >(systemd-cat --identifier=nucore-session) 2>&1
-    # util-linux login has no "run this command/shell" option.  The installer
-    # temporarily makes this script the account's login shell for standalone
-    # cabinet profiles, so login can perform its ordinary PAM/logind work and
-    # then enter the backend here.
-    exec /bin/login -f "$session_user"
-fi
-
-# The account remains configured with this wrapper so the next boot can enter
-# the cabinet session again.  For the remainder of a boot where Nucore or its
-# backend exited, the root service places an ephemeral marker. A subsequent
-# password-backed login then receives the account's recorded original shell
-# instead of recursively relaunching the failed cabinet backend.
-MAINTENANCE_MARKER=/run/nucore-portable/maintenance-login
-STATE_DIR=/var/lib/nucore-portable
-if [ -e "$MAINTENANCE_MARKER" ] &&
-   [ -r "$STATE_DIR/login-shell-user" ] &&
-   [ -r "$STATE_DIR/original-login-shell" ]; then
-    recorded_user=$(sed -n '1p' "$STATE_DIR/login-shell-user")
-    original_shell=$(sed -n '1p' "$STATE_DIR/original-login-shell")
-    if [ "$recorded_user" = "$(id -un)" ]; then
-        case "$original_shell" in
-            /*) [ -x "$original_shell" ] && exec "$original_shell" -l ;;
-        esac
-        echo "nucore-session: recorded maintenance shell is unavailable" >&2
-        exit 4
-    fi
-fi
-
 client_main() {
     shift
     nested_host=0
@@ -169,7 +133,9 @@ fi
 
 case "$BACKEND" in
     xorg)
-        exec xinit "$SELF" --client --xorg -- :0 vt1 -nolisten tcp -noreset -s 0 -dpms
+        # The login session supplies PAM/logind and user services. The root
+        # system service owns Xorg itself and attaches Nucore to it.
+        exec "$SELF" "${client_args[@]}"
         ;;
     cage)
         exec cage -- "$SELF" "${client_args[@]}"

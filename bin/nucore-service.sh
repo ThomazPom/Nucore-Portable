@@ -25,6 +25,8 @@ ARGS_FILE=/etc/nucore-portable/launch.args
 mapfile -t LAUNCH_ARGS < "$ARGS_FILE"
 
 cleanup() {
+    [ -z "${backend_pid:-}" ] || kill "$backend_pid" 2>/dev/null || true
+    [ -z "${backend_pid:-}" ] || wait "$backend_pid" 2>/dev/null || true
     rm -f "$ROOT_RUNTIME_DIR/wayland-client" 2>/dev/null || true
     rmdir "$ROOT_RUNTIME_DIR" /run/nucore-portable 2>/dev/null || true
     [ "$BACKEND" != display-manager ] || return 0
@@ -59,6 +61,7 @@ EOF
 administrative_stop() { cleanup; exit 0; }
 trap administrative_stop HUP INT TERM
 unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
+backend_pid=""
 
 if [ "$BACKEND" = display-manager ]; then
     # A normal desktop session imports its live display addresses into the
@@ -106,6 +109,31 @@ else
     [ "$(stat -c %u "$ENV_FILE")" = "$SESSION_UID" ] || {
         echo "nucore-service: refusing environment with wrong owner" >&2; exit 4;
     }
+fi
+
+# Xorg is deliberately owned by this already-privileged system service. The
+# user login exists for PAM/logind/audio, not to elevate or own the display
+# server. Root can acquire the cabinet VT directly on both real hardware and
+# simple QEMU VGA devices.
+if [ "$BACKEND" = xorg ]; then
+    Xorg :0 vt1 -nolisten tcp -noreset -s 0 -dpms &
+    backend_pid=$!
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -S /tmp/.X11-unix/X0 ]; do
+        kill -0 "$backend_pid" 2>/dev/null || {
+            echo "nucore-service: root Xorg failed to initialize" >&2
+            start_maintenance
+            exit 4
+        }
+        i=$((i + 1)); sleep 0.1
+    done
+    [ -S /tmp/.X11-unix/X0 ] || {
+        echo "nucore-service: root Xorg readiness timeout" >&2
+        start_maintenance
+        exit 4
+    }
+    export DISPLAY=:0
+    export XAUTHORITY=/dev/null
 fi
 
 import_display_environment() {

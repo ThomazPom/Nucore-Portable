@@ -265,6 +265,19 @@ if [ "$sdl12_compat" -eq 1 ] && [ "$sdl_display" = wayland ] &&
 fi
 
 missing=()
+# The bundled 32-bit ALSA library still consumes the distribution's
+# architecture-independent ALSA configuration. A stripped netinst does not
+# necessarily contain it.
+[ -r /usr/share/alsa/alsa.conf ] || missing+=(libasound2-data)
+
+# A real login starts enabled user services, but a minimal Debian installation
+# may contain no audio server at all. Reuse any PulseAudio or PipeWire stack
+# already selected by the distribution; otherwise request Debian's maintained
+# PipeWire audio set through the same generic package resolver.
+if ! command -v pipewire >/dev/null 2>&1 &&
+   ! command -v pulseaudio >/dev/null 2>&1; then
+    missing+=(pipewire-audio)
+fi
 case "$backend" in
     gamescope)
         command -v gamescope >/dev/null 2>&1 || [ -x /usr/games/gamescope ] || missing+=(gamescope)
@@ -278,7 +291,6 @@ case "$backend" in
     weston)    command -v weston >/dev/null 2>&1 || missing+=(weston) ;;
     xorg)
         command -v Xorg >/dev/null 2>&1 || missing+=(xserver-xorg-core)
-        command -v xinit >/dev/null 2>&1 || missing+=(xinit)
         [ -e /usr/lib/xorg/modules/input/libinput_drv.so ] || missing+=(xserver-xorg-input-libinput)
         ;;
 esac
@@ -289,7 +301,7 @@ if [ "$sdl12_compat" -eq 0 ] || [ "$sdl_display" = xwayland ]; then
             ;;
     esac
     case "$backend" in
-        display-manager|gamescope|weston|xorg)
+        gamescope|weston)
             command -v xhost >/dev/null 2>&1 || missing+=(x11-xserver-utils)
             ;;
     esac
@@ -376,11 +388,11 @@ install -d -m 0755 "$STATE" "$CONF_DIR"
     systemctl is-enabled getty@tty1.service > "$STATE/getty-tty1-was-enabled" 2>/dev/null || true
 printf '%s\n' "$backend" > "$STATE/install-mode"
 
-# /bin/login deliberately executes the shell recorded in passwd and offers no
-# option to replace it with a command.  Standalone profiles therefore use the
-# cabinet session host as this account's login shell.  Preserve the original
-# value exactly so uninstall can restore it.  Display-manager profiles retain
-# the user's ordinary shell.
+# /bin/login deliberately executes the shell recorded in passwd. Standalone
+# profiles temporarily select Debian's POSIX login shell; its system profile
+# hook enters the cabinet host after PAM/logind. Preserve the original value
+# exactly so uninstall can restore it. Display-manager profiles retain the
+# user's ordinary shell.
 if [ "$backend" != display-manager ]; then
     original_login_shell=$(getent passwd "$session_user" | cut -d: -f7)
     [ -n "$original_login_shell" ] || {
@@ -389,8 +401,8 @@ if [ "$backend" != display-manager ]; then
     }
     printf '%s\n' "$original_login_shell" > "$STATE/original-login-shell"
     printf '%s\n' "$session_user" > "$STATE/login-shell-user"
-    printf '%s\n' "$ROOT/bin/nucore-session.sh" > "$STATE/installed-login-shell"
-    usermod -s "$ROOT/bin/nucore-session.sh" "$session_user"
+    printf '%s\n' /bin/sh > "$STATE/installed-login-shell"
+    usermod -s /bin/sh "$session_user"
     login_shell_changed=1
 fi
 apt_source_created=0
@@ -410,6 +422,31 @@ if [ "$backend" != display-manager ]; then
             stat -c '%d:%i' "$hushlogin"
         } > "$STATE/hushlogin-created"
     fi
+fi
+
+# A POSIX login shell reliably reads /etc/profile on Debian-family systems.
+# Use a narrowly gated profile hook to enter the cabinet host on tty1 after
+# /bin/login has completed PAM/logind setup. The user's original shell remains
+# recorded for maintenance and uninstall.
+if [ "$backend" != display-manager ]; then
+    cat > /etc/profile.d/nucore-cabinet.sh <<EOF
+# nucore-portable managed cabinet login
+if [ "\${NUCORE_MAINTENANCE_LOGIN:-0}" = 1 ]; then
+    # The original login shell reads /etc/profile again. Consume this one-shot
+    # guard so that entering maintenance cannot recursively exec itself.
+    unset NUCORE_MAINTENANCE_LOGIN
+else
+    if [ "\$(id -un 2>/dev/null)" = "$session_user" ] &&
+       [ "\$(tty 2>/dev/null)" = /dev/tty1 ]; then
+        if [ -e /run/nucore-portable/maintenance-login ]; then
+            exec env NUCORE_MAINTENANCE_LOGIN=1 "$original_login_shell" -l
+        else
+            exec "$ROOT/bin/nucore-session.sh"
+        fi
+    fi
+fi
+EOF
+    chmod 0644 /etc/profile.d/nucore-cabinet.sh
 fi
 
 cat > "$CONF" <<EOF
@@ -498,10 +535,11 @@ if [ "$backend" = display-manager ]; then
 else
     rm -f /etc/xdg/autostart/nucore-cabinet.desktop
     install -d -m 0755 /etc/systemd/system/getty@tty1.service.d
-    cat > /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf <<EOF
+    getty_dropin_tmp=$(mktemp /etc/systemd/system/getty@tty1.service.d/.49-nucore-portable.conf.XXXXXX)
+    cat > "$getty_dropin_tmp" <<EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --skip-login --login-program "$ROOT/bin/nucore-session.sh" --login-options '--login $session_user' --noissue --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin $session_user --noissue --noclear %I \$TERM
 # Keep tty1 as the controlling terminal, but do not paint the automatic-login,
 # PAM/MOTD or backend diagnostics over the Plymouth-to-game handoff.
 StandardOutput=journal
@@ -509,6 +547,9 @@ StandardError=journal
 TTYVTDisallocate=no
 Restart=no
 EOF
+    test -s "$getty_dropin_tmp"
+    chmod 0644 "$getty_dropin_tmp"
+    mv -f "$getty_dropin_tmp" /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 fi
 
 # Configure autologin without replacing the user's remembered desktop session.
@@ -567,7 +608,8 @@ else
     install_target=multi-user.target
 fi
 
-cat > /etc/systemd/system/nucore.service <<EOF
+service_tmp=$(mktemp /etc/systemd/system/.nucore.service.XXXXXX)
+cat > "$service_tmp" <<EOF
 [Unit]
 Description=Pinball 2000 (Nucore Portable session architecture)
 Documentation=file:$ROOT/README.md
@@ -588,6 +630,13 @@ StandardError=journal
 [Install]
 WantedBy=$install_target
 EOF
+
+test -s "$service_tmp"
+chmod 0644 "$service_tmp"
+mv -f "$service_tmp" /etc/systemd/system/nucore.service
+test -s /etc/systemd/system/nucore.service
+[ "$backend" = display-manager ] ||
+    test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 
 systemctl daemon-reload
 systemctl enable nucore.service

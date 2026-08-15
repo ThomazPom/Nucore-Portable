@@ -212,7 +212,7 @@ test_install() {
         *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\n' ;;
     esac
     install_as_cabinet "$backend" "$answers"
-    ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
+    ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
     # Installation is not proven until the configured agetty has traversed
     # login/PAM, created /run/user/UID and started the backend after a reboot.
     ssh_guest 'systemctl reboot' >/dev/null 2>&1 || true
@@ -222,7 +222,7 @@ test_install() {
     # backend/session failure. The login journal proves PAM was traversed.
     ssh_guest "journalctl -b -u getty@tty1.service --no-pager | grep -q 'session opened for user cabinet' && test \"\$(systemctl show -p Result --value nucore.service)\" = success && { test -f /run/user/1000/nucore-portable/display-environment || ! systemctl is-active --quiet nucore.service; }"
     ssh_guest "cd /opt/Nucore-Portable && ./uninstall.sh"
-    ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash"
+    ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && systemctl is-active --quiet getty@tty1.service"
     stop_vm
     echo "PASS: stripped Debian install/uninstall ($backend)"
 }

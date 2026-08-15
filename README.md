@@ -88,10 +88,15 @@ selected display backend. In both paths the selected account gets its normal
 `XDG_RUNTIME_DIR`, D-Bus, `systemd --user`, audio and distribution services. It
 does not need sudo or administrator membership.
 
+In the standalone Xorg profile, the login session supplies PAM/logind, D-Bus
+and audio, while the already-privileged `nucore.service` starts Xorg itself.
+This lets Xorg acquire the cabinet VT directly and keeps display ownership and
+Nucore lifecycle under the same root system service.
+
 For standalone profiles, the installer records the cabinet account's login
-shell and temporarily points it at the cabinet session host. Standard
-`/bin/login` then enters that host after PAM; util-linux login has no command
-override. Uninstall restores the recorded shell unless someone changed it
+shell and temporarily selects `/bin/sh`. Standard `/bin/login` completes PAM
+and logind setup, then a tty1-only `/etc/profile.d` hook enters the cabinet
+host. Uninstall restores the recorded shell unless someone changed it
 independently after installation.
 
 `nucore.service` remains a privileged system service. It waits for the real
@@ -199,6 +204,10 @@ APT: `gamescope`, `cage`, `weston`, Xwayland, or the minimal Xorg components.
 Because Gamescope is Vulkan-only, a Mesa Vulkan ICD is also installed when the
 host exposes no existing Vulkan implementation; vendor-provided ICDs are left
 untouched.
+The same resolver checks the architecture-independent ALSA configuration and
+whether the distribution already provides PipeWire or PulseAudio. On a stripped
+netinst with neither, it offers Debian's `pipewire-audio` set rather than
+hard-coding individual service names into the launcher.
 It simulates each package installation first and reports the exact packages
 without candidates. On Debian stable it can check the official backports
 `main` and `contrib` components after confirmation; the narrowly scoped,
@@ -233,22 +242,21 @@ under `/var/lib/nucore-portable/`. The display-manager path keeps
 `graphical.target` and enables DM autologin without changing the user's
 remembered GNOME, Plasma, X11 or Wayland session.
 Standalone paths select `multi-user.target`, configure a normal PAM-backed
-autologin on tty1, and temporarily select the project session host as the
-account's login shell. They remember the original shell and previous
-target/getty state. On normal game exit they can start the installed display
-manager or leave a tty login for maintenance. Administrative service stops do
-not trigger that fallback. A root-owned marker under `/run` makes that
-password-backed maintenance login enter the recorded original shell instead
-of relaunching the cabinet backend; `/run` is cleared for the next boot.
+autologin on tty1, temporarily select `/bin/sh`, and install a tty1-only profile
+hook that enters the project session host after login. They remember the
+original shell and previous target/getty state. On normal game exit they can
+start the installed display manager or leave a tty login for maintenance.
+Administrative service stops do not trigger that fallback. A root-owned marker
+under `/run` makes that password-backed maintenance login enter the recorded
+original shell instead of relaunching the cabinet backend; `/run` is cleared
+for the next boot.
 
-During cabinet startup, tty1 remains the session's controlling terminal, while
-`agetty --skip-login` avoids printing an automatic-login prompt. A narrow
-`nucore-session.sh --login` entry point redirects the ordinary login and
-display-backend streams to the journal before executing the normal login
-program. PAM's terminal conversation can bypass that redirection, so the
-installer also creates the standard empty `~/.hushlogin` when the selected user
-does not already have one. Its path and inode are recorded; uninstall removes
-only that unchanged project-created file. This suppresses the MOTD but does not
+During cabinet startup, tty1 remains the session's controlling terminal.
+Standard `agetty --autologin` invokes `/bin/login`, PAM and logind directly;
+there is no project login proxy. The unit journals startup output, and the
+installer creates the standard empty `~/.hushlogin` when the selected user does
+not already have one. Its path and inode are recorded; uninstall removes only
+that unchanged project-created file. This suppresses the MOTD but does not
 replace or bypass PAM. If Nucore exits to console maintenance, the temporary
 maintenance getty restores visible terminal output for the normal password
 prompt.

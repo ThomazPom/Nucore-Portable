@@ -31,10 +31,10 @@ INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 systemctl stop nucore.service    2>/dev/null || true
 systemctl disable nucore.service 2>/dev/null || true
-case "$INSTALL_MODE" in
-    xorg-only|xorg|console|cage|weston|gamescope)
-        systemctl stop getty@tty1.service 2>/dev/null || true ;;
-esac
+# Never stop tty1 here: the administrator may be running this very script from
+# the maintenance login hosted by getty@tty1. Removing its drop-ins and
+# restoring its enablement is sufficient; the current login may live until the
+# user exits or reboots.
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
 rm -f /etc/profile.d/nucore-cabinet.sh
@@ -43,8 +43,10 @@ rm -f /usr/share/xsessions/nucore.desktop
 rm -f /usr/share/wayland-sessions/nucore.desktop
 rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 rm -f /run/systemd/system/getty@tty1.service.d/50-nucore-maintenance.conf
+rm -f /run/nucore-portable/maintenance-login
 rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
 rmdir /run/systemd/system/getty@tty1.service.d 2>/dev/null || true
+rmdir /run/nucore-portable 2>/dev/null || true
 rm -f /etc/nucore-portable/session.conf
 rm -f /etc/nucore-portable/launch.args
 rmdir /etc/nucore-portable 2>/dev/null || true
@@ -181,6 +183,9 @@ rmdir /etc/lightdm/lightdm.conf.d 2>/dev/null || true
 rm -f "$STATE_DIR/install-mode" \
       "$STATE_DIR/previous-default-target" \
       "$STATE_DIR/getty-tty1-was-enabled" \
+      "$STATE_DIR/original-login-shell" \
+      "$STATE_DIR/login-shell-user" \
+      "$STATE_DIR/installed-login-shell" \
       "$STATE_DIR/gdm-session-state" \
       "$STATE_DIR/gdm-xsession-state" \
       "$STATE_DIR/install-user" \
