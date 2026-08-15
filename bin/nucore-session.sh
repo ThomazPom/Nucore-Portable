@@ -15,7 +15,11 @@ if [ "${1:-}" = --login ]; then
     session_uid=$(id -u "$session_user" 2>/dev/null) || exit 3
     [ "$session_uid" -ge 1000 ] || exit 3
     exec > >(systemd-cat --identifier=nucore-session) 2>&1
-    exec /bin/login -f "$session_user" -s "$ROOT_DIR/bin/nucore-session.sh"
+    # util-linux login has no "run this command/shell" option.  The installer
+    # temporarily makes this script the account's login shell for standalone
+    # cabinet profiles, so login can perform its ordinary PAM/logind work and
+    # then enter the backend here.
+    exec /bin/login -f "$session_user"
 fi
 
 client_main() {

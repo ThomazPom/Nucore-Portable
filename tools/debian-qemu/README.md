@@ -26,6 +26,14 @@ Useful commands:
 ./tools/debian-qemu/lab.sh reset         # discard only the current overlay
 ```
 
+The lab's deliberately simple virtual VGA is sufficient for session, Xorg and
+direct-console lifecycle tests. Gamescope requires a Vulkan implementation,
+which this portable QEMU configuration does not pretend to provide. If it
+rejects the virtual GPU,
+the cabinet failure fallback should present a maintenance login instead of
+leaving the last GRUB frame on screen. Validate Gamescope rendering and scaling
+on physical Vulkan-capable hardware.
+
 Artifacts live outside Git under `${XDG_CACHE_HOME:-~/.cache}/nucore-qemu` by
 default. Set `NUCORE_QEMU_DIR`, `NUCORE_QEMU_CPUS`, or `NUCORE_QEMU_RAM` to
 override the location and VM size. The base image is never booted by a test;

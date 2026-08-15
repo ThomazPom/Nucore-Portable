@@ -50,6 +50,21 @@ rm -f /etc/nucore-portable/launch.args
 rmdir /etc/nucore-portable 2>/dev/null || true
 systemctl daemon-reload
 
+if [ -s "$STATE_DIR/original-login-shell" ] &&
+   [ -s "$STATE_DIR/login-shell-user" ] &&
+   [ -s "$STATE_DIR/installed-login-shell" ]; then
+    LOGIN_SHELL_USER=$(sed -n '1p' "$STATE_DIR/login-shell-user")
+    ORIGINAL_LOGIN_SHELL=$(sed -n '1p' "$STATE_DIR/original-login-shell")
+    INSTALLED_LOGIN_SHELL=$(sed -n '1p' "$STATE_DIR/installed-login-shell")
+    CURRENT_LOGIN_SHELL=$(getent passwd "$LOGIN_SHELL_USER" 2>/dev/null | cut -d: -f7)
+    if [ "$CURRENT_LOGIN_SHELL" = "$INSTALLED_LOGIN_SHELL" ]; then
+        echo "[+] restoring $LOGIN_SHELL_USER login shell"
+        usermod -s "$ORIGINAL_LOGIN_SHELL" "$LOGIN_SHELL_USER"
+    else
+        echo "[!] $LOGIN_SHELL_USER login shell changed since installation; leaving it untouched" >&2
+    fi
+fi
+
 for project_source in "$BACKPORTS_APT_SOURCE" "$LEGACY_GAMESCOPE_APT_SOURCE"; do
     [ -f "$project_source" ] || continue
     if grep -q '^# nucore-portable managed Debian backports$' "$project_source" ||

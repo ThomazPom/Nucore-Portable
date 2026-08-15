@@ -234,11 +234,17 @@ echo "  maintenance  : $maintenance"
 ask "Proceed?" Y || exit 0
 
 apt_source_created=0
+login_shell_changed=0
+original_login_shell=""
 cleanup_failed_install() {
     local rc=$?
     trap - EXIT
     if [ "$rc" -ne 0 ] && [ "$apt_source_created" -eq 1 ]; then
         rm -f "$BACKPORTS_APT_SOURCE"
+    fi
+    if [ "$rc" -ne 0 ] && [ "$login_shell_changed" -eq 1 ] &&
+       [ -n "$original_login_shell" ]; then
+        usermod -s "$original_login_shell" "$session_user" 2>/dev/null || true
     fi
     exit "$rc"
 }
@@ -262,6 +268,11 @@ missing=()
 case "$backend" in
     gamescope)
         command -v gamescope >/dev/null 2>&1 || [ -x /usr/games/gamescope ] || missing+=(gamescope)
+        # Gamescope is Vulkan-only. Debian marks Mesa's ICD as Recommended,
+        # but this installer deliberately uses --no-install-recommends. Add it
+        # when the host has no Vulkan implementation of its own (for example
+        # a proprietary vendor ICD).
+        compgen -G '/usr/share/vulkan/icd.d/*.json' >/dev/null || missing+=(mesa-vulkan-drivers)
         ;;
     cage)      command -v cage >/dev/null 2>&1 || missing+=(cage) ;;
     weston)    command -v weston >/dev/null 2>&1 || missing+=(weston) ;;
@@ -364,6 +375,24 @@ install -d -m 0755 "$STATE" "$CONF_DIR"
 [ -f "$STATE/getty-tty1-was-enabled" ] ||
     systemctl is-enabled getty@tty1.service > "$STATE/getty-tty1-was-enabled" 2>/dev/null || true
 printf '%s\n' "$backend" > "$STATE/install-mode"
+
+# /bin/login deliberately executes the shell recorded in passwd and offers no
+# option to replace it with a command.  Standalone profiles therefore use the
+# cabinet session host as this account's login shell.  Preserve the original
+# value exactly so uninstall can restore it.  Display-manager profiles retain
+# the user's ordinary shell.
+if [ "$backend" != display-manager ]; then
+    original_login_shell=$(getent passwd "$session_user" | cut -d: -f7)
+    [ -n "$original_login_shell" ] || {
+        echo "install.sh: cannot determine login shell for $session_user" >&2
+        exit 3
+    }
+    printf '%s\n' "$original_login_shell" > "$STATE/original-login-shell"
+    printf '%s\n' "$session_user" > "$STATE/login-shell-user"
+    printf '%s\n' "$ROOT/bin/nucore-session.sh" > "$STATE/installed-login-shell"
+    usermod -s "$ROOT/bin/nucore-session.sh" "$session_user"
+    login_shell_changed=1
+fi
 apt_source_created=0
 
 # util-linux login and pam_motd deliberately write the distribution MOTD to

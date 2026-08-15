@@ -33,6 +33,27 @@ cleanup() {
     rm -f "$ENV_FILE" "$SESSION_DIR"/environment.* 2>/dev/null || true
     rmdir "$SESSION_DIR" 2>/dev/null || true
 }
+start_maintenance() {
+    [ "$BACKEND" != display-manager ] || return 0
+    if [ "$MAINTENANCE" = display-manager ]; then
+        systemctl stop getty@tty1.service 2>/dev/null || true
+        systemctl --no-block start graphical.target display-manager.service 2>/dev/null || true
+    else
+        # Replace cabinet autologin for the remainder of this boot with an
+        # ordinary password-backed prompt. This is also the safe fallback when
+        # a selected display backend cannot initialize.
+        install -d -m 0755 /run/systemd/system/getty@tty1.service.d
+        cat > /run/systemd/system/getty@tty1.service.d/50-nucore-maintenance.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --noclear %I $TERM
+StandardOutput=tty
+StandardError=tty
+EOF
+        systemctl daemon-reload
+        systemctl --no-block restart getty@tty1.service 2>/dev/null || true
+    fi
+}
 administrative_stop() { cleanup; exit 0; }
 trap administrative_stop HUP INT TERM
 unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
@@ -60,10 +81,20 @@ if [ "$BACKEND" = display-manager ]; then
     }
 else
     i=0
+    getty_seen=0
     while [ "$i" -lt 1800 ] && [ ! -f "$ENV_FILE" ]; do
+        if systemctl is-active --quiet getty@tty1.service; then
+            getty_seen=1
+        elif [ "$getty_seen" -eq 1 ]; then
+            break
+        fi
         i=$((i + 1)); sleep 0.1
     done
-    [ -f "$ENV_FILE" ] || { echo "nucore-service: session environment timeout" >&2; exit 4; }
+    [ -f "$ENV_FILE" ] || {
+        echo "nucore-service: cabinet login/display backend exited before becoming ready" >&2
+        start_maintenance
+        exit 4
+    }
     [ "$(stat -c %u "$RUNTIME_DIR" 2>/dev/null)" = "$SESSION_UID" ] || {
         echo "nucore-service: invalid user runtime directory" >&2; exit 4;
     }
@@ -179,25 +210,5 @@ status=0
 "$ROOT_DIR/start.sh" --no-root --no-inhibit "${LAUNCH_ARGS[@]}" "$@" || status=$?
 cleanup
 trap - HUP INT TERM
-if [ "${NUCORE_TEST_NO_MAINTENANCE:-0}" = 1 ]; then
-    :
-elif [ "$BACKEND" != display-manager ] && [ "$MAINTENANCE" = display-manager ]; then
-    systemctl stop getty@tty1.service 2>/dev/null || true
-    systemctl --no-block start graphical.target display-manager.service 2>/dev/null || true
-elif [ "$BACKEND" != display-manager ]; then
-    # Keep cabinet autologin persistent for the next boot, but replace it for
-    # the remainder of this boot with an ordinary password-backed tty login.
-    install -d -m 0755 /run/systemd/system/getty@tty1.service.d
-    cat > /run/systemd/system/getty@tty1.service.d/50-nucore-maintenance.conf <<'EOF'
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --noclear %I $TERM
-# The persistent cabinet getty journals its output for a clean boot. Restore
-# the visible terminal when the user explicitly enters maintenance instead.
-StandardOutput=tty
-StandardError=tty
-EOF
-    systemctl daemon-reload
-    systemctl --no-block restart getty@tty1.service 2>/dev/null || true
-fi
+[ "${NUCORE_TEST_NO_MAINTENANCE:-0}" = 1 ] || start_maintenance
 exit "$status"

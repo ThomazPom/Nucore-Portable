@@ -88,6 +88,12 @@ selected display backend. In both paths the selected account gets its normal
 `XDG_RUNTIME_DIR`, D-Bus, `systemd --user`, audio and distribution services. It
 does not need sudo or administrator membership.
 
+For standalone profiles, the installer records the cabinet account's login
+shell and temporarily points it at the cabinet session host. Standard
+`/bin/login` then enters that host after PAM; util-linux login has no command
+override. Uninstall restores the recorded shell unless someone changed it
+independently after installation.
+
 `nucore.service` remains a privileged system service. It waits for the real
 user session to become ready, then launches Nucore as root. It gives that root
 process a private, ephemeral runtime directory instead of falsely treating the
@@ -190,6 +196,9 @@ historical X11 fullscreen path itself. The auditable source is
 
 The installer resolves every package required by the selected backend through
 APT: `gamescope`, `cage`, `weston`, Xwayland, or the minimal Xorg components.
+Because Gamescope is Vulkan-only, a Mesa Vulkan ICD is also installed when the
+host exposes no existing Vulkan implementation; vendor-provided ICDs are left
+untouched.
 It simulates each package installation first and reports the exact packages
 without candidates. On Debian stable it can check the official backports
 `main` and `contrib` components after confirmation; the narrowly scoped,
@@ -224,8 +233,8 @@ under `/var/lib/nucore-portable/`. The display-manager path keeps
 `graphical.target` and enables DM autologin without changing the user's
 remembered GNOME, Plasma, X11 or Wayland session.
 Standalone paths select `multi-user.target`, configure a normal PAM-backed
-autologin on tty1, and use `login -s` to select the project session shell
-without changing the account's configured shell. They remember the previous
+autologin on tty1, and temporarily select the project session host as the
+account's login shell. They remember the original shell and previous
 target/getty state. On normal game exit they can start the installed display
 manager or leave a tty login for maintenance. Administrative service stops do
 not trigger that fallback.
