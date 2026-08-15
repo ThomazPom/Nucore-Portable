@@ -42,26 +42,57 @@ stop_nucore() {
     nucore_pid=""
 }
 
+end_standalone_session() {
+    local i sessions
+    [ "$BACKEND" != display-manager ] || return 0
+
+    # First ask the login-owned backend to leave, then terminate the dedicated
+    # login through logind. Stopping getty alone only kills its cgroup and does
+    # not provide a synchronous guarantee that the logind session, user
+    # manager, audio services and seat ownership have all disappeared.
+    rm -f "$ENV_FILE" "$SESSION_DIR"/environment.* 2>/dev/null || true
+    command -v loginctl >/dev/null 2>&1 || {
+        echo "nucore-service: loginctl is required for a safe VT handoff" >&2
+        return 1
+    }
+    loginctl terminate-user "$SESSION_USER" 2>/dev/null || true
+
+    # Prevent a cabinet autologin from being recreated while logind tears the
+    # old session down. This is the old cabinet getty, not the maintenance
+    # getty which is installed only after the barrier below has passed.
+    systemctl stop getty@tty1.service 2>/dev/null || true
+
+    i=0
+    while [ "$i" -lt 100 ]; do
+        sessions=$(loginctl show-user "$SESSION_USER" -p Sessions --value 2>/dev/null || true)
+        if [ -z "$sessions" ] &&
+           ! systemctl is-active --quiet "user@${SESSION_UID}.service" 2>/dev/null &&
+           ! systemctl is-active --quiet getty@tty1.service 2>/dev/null; then
+            echo "nucore-service: cabinet login ended; VT handoff is safe" >&2
+            return 0
+        fi
+        i=$((i + 1)); sleep 0.1
+    done
+
+    echo "nucore-service: cabinet login did not terminate; refusing VT handoff" >&2
+    return 1
+}
+
 cleanup() {
+    local result=0
     stop_nucore
-    if [ "$BACKEND" != display-manager ]; then
-        # Removing the rendezvous asks the login-owned client to exit. Stopping
-        # its getty then closes the complete login/compositor cgroup before a
-        # maintenance display manager is allowed to acquire the seat.
-        rm -f "$ENV_FILE" "$SESSION_DIR"/environment.* 2>/dev/null || true
-        systemctl stop getty@tty1.service 2>/dev/null || true
-    fi
+    end_standalone_session || result=$?
     rm -f "$ROOT_RUNTIME_DIR/wayland-client" 2>/dev/null || true
     rmdir "$ROOT_RUNTIME_DIR" /run/nucore-portable 2>/dev/null || true
-    [ "$BACKEND" != display-manager ] || return 0
-    [ -d "$SESSION_DIR" ] || return 0
-    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = "$SESSION_UID" ] || return 0
-    rmdir "$SESSION_DIR" 2>/dev/null || true
+    if [ "$BACKEND" != display-manager ] && [ -d "$SESSION_DIR" ] &&
+       [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = "$SESSION_UID" ]; then
+        rmdir "$SESSION_DIR" 2>/dev/null || true
+    fi
+    return "$result"
 }
 start_maintenance() {
     [ "$BACKEND" != display-manager ] || return 0
     if [ "$MAINTENANCE" = display-manager ]; then
-        systemctl stop getty@tty1.service 2>/dev/null || true
         systemctl --no-block start graphical.target display-manager.service 2>/dev/null || true
     else
         # Open an ordinary password-backed prompt for maintenance. This is also
@@ -78,7 +109,7 @@ EOF
         systemctl --no-block restart getty@tty1.service 2>/dev/null || true
     fi
 }
-administrative_stop() { cleanup; exit 0; }
+administrative_stop() { cleanup && exit 0 || exit 5; }
 trap administrative_stop HUP INT TERM
 unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
 
@@ -119,6 +150,7 @@ else
     done
     [ -f "$ENV_FILE" ] || {
         echo "nucore-service: cabinet display backend exited before becoming ready" >&2
+        cleanup || exit 5
         start_maintenance
         exit 4
     }
@@ -236,7 +268,7 @@ setsid "$ROOT_DIR/start.sh" --no-root --no-inhibit "${LAUNCH_ARGS[@]}" "$@" &
 nucore_pid=$!
 wait "$nucore_pid" || status=$?
 nucore_pid=""
-cleanup
+cleanup || exit 5
 trap - HUP INT TERM
 [ "${NUCORE_TEST_NO_MAINTENANCE:-0}" = 1 ] || start_maintenance
 exit "$status"

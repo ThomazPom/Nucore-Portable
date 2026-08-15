@@ -33,11 +33,29 @@ CABINET_USER=""
 [ -f "$STATE_DIR/cabinet-user-created" ] && CABINET_USER=$(sed -n '1p' "$STATE_DIR/cabinet-user-created")
 systemctl stop nucore.service    2>/dev/null || true
 systemctl disable nucore.service 2>/dev/null || true
-# A project-created cabinet login can safely be stopped: it has no interactive
-# maintenance shell. Older installations had no dedicated account, so retain
-# their current tty session until the administrator exits or reboots.
-[ "$CABINET_USER" != nucore-cabinet ] || \
+# Explicitly close the project account through logind before releasing tty1.
+# The service normally completed this barrier already; repeat it idempotently
+# so uninstall also handles a failed or previously killed service safely.
+if [ "$CABINET_USER" = nucore-cabinet ] && getent passwd "$CABINET_USER" >/dev/null; then
+    CABINET_UID=$(id -u "$CABINET_USER")
+    loginctl terminate-user "$CABINET_USER" 2>/dev/null || true
     systemctl stop getty@tty1.service 2>/dev/null || true
+    SESSION_END_WAIT=0
+    while [ "$SESSION_END_WAIT" -lt 100 ]; do
+        CABINET_SESSIONS=$(loginctl show-user "$CABINET_USER" -p Sessions --value 2>/dev/null || true)
+        if [ -z "$CABINET_SESSIONS" ] &&
+           ! systemctl is-active --quiet "user@${CABINET_UID}.service" 2>/dev/null &&
+           ! systemctl is-active --quiet getty@tty1.service 2>/dev/null; then
+            break
+        fi
+        SESSION_END_WAIT=$((SESSION_END_WAIT + 1))
+        sleep 0.1
+    done
+    if [ "$SESSION_END_WAIT" -ge 100 ]; then
+        echo "uninstall.sh: cabinet login did not terminate; refusing to release tty1" >&2
+        exit 3
+    fi
+fi
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
 # Remove files from the short-lived global-login implementation too, so this
@@ -61,8 +79,6 @@ if [ "$CABINET_USER" = nucore-cabinet ]; then
     if getent passwd "$CABINET_USER" >/dev/null; then
         echo "[+] removing dedicated cabinet account $CABINET_USER"
         CABINET_UID=$(id -u "$CABINET_USER")
-        loginctl terminate-user "$CABINET_USER" 2>/dev/null || true
-        systemctl stop "user@${CABINET_UID}.service" 2>/dev/null || true
         userdel -r "$CABINET_USER" 2>/dev/null || {
             echo "uninstall.sh: could not remove $CABINET_USER" >&2
             exit 3

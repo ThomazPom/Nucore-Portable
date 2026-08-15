@@ -100,6 +100,10 @@ root. Standalone backends publish their display endpoints from the dedicated
 account's runtime directory; Nucore receives a private root runtime containing
 only a validated link to the selected Wayland socket. Audio and D-Bus use
 explicit sockets from that same real login session.
+Before tty1 is handed to a maintenance login or display manager, the service
+explicitly terminates `nucore-cabinet` through logind and waits for its logind
+sessions, user manager and cabinet getty to disappear. A failed barrier blocks
+the handoff instead of allowing two sessions to compete for the seat.
 In display-manager mode it reads only `DISPLAY`,
 `XAUTHORITY` and `WAYLAND_DISPLAY` from the environment that the normal desktop
 has already imported into `systemd --user`. This needs no autostart helper,
@@ -241,8 +245,8 @@ Standalone paths select `multi-user.target` and reserve tty1 for the dedicated
 PAM/logind cabinet login. They remember the previous target/getty state. On normal game exit
 they can start the installed display manager or open a normal password-backed
 tty1 login for maintenance. Administrative service stops do not trigger that
-fallback. tty2 and later VTs, SSH, the account database, PAM and user profile
-files are never part of the cabinet launch path.
+fallback. tty2 and later VTs, SSH, PAM, and the selected human account and its
+profile files are never part of the cabinet launch path.
 
 Paul's cabinet video is an excellent example of broader Linux appliance
 tuning: its boot is unusually fast and the handoff into Nucore is nearly

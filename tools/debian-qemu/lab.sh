@@ -196,7 +196,7 @@ EXPECT_EOF
 }
 
 test_install() {
-    local backend=${1:-xorg} answers
+    local backend=${1:-xorg} answers cabinet_uid
     case "$backend" in xorg|console|gamescope|cage|weston) ;; *) die "unsupported stripped-guest backend: $backend" ;; esac
     reset_overlay
     start_overlay
@@ -229,8 +229,9 @@ test_install() {
         # Nucore service alone is not sufficient evidence of a working login.
         ssh_guest "test -s /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log && grep -q 'modeset(0)' /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log"
     fi
+    cabinet_uid=$(ssh_guest 'id -u nucore-cabinet')
     ssh_guest "cd /opt/Nucore-Portable && ./uninstall.sh"
-    ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && ! getent passwd nucore-cabinet >/dev/null && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && systemctl is-active --quiet getty@tty1.service"
+    ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && ! getent passwd nucore-cabinet >/dev/null && ! loginctl list-sessions --no-legend | grep -qw nucore-cabinet && ! systemctl is-active --quiet user@${cabinet_uid}.service && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && systemctl is-active --quiet getty@tty1.service"
     stop_vm
     echo "PASS: stripped Debian install/uninstall ($backend)"
 }
