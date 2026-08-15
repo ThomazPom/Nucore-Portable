@@ -58,6 +58,17 @@ wait_ssh() {
     die "timed out waiting for guest SSH"
 }
 
+# A reboot request returns before sshd from the old boot has necessarily gone
+# away. Observe that disconnect first, otherwise wait_ssh can accidentally
+# accept the old userspace and race every post-reboot assertion.
+wait_ssh_down() {
+    for _ in {1..60}; do
+        ssh_guest true >/dev/null 2>&1 || return 0
+        sleep 0.25
+    done
+    die "guest did not leave the previous boot"
+}
+
 ssh_guest() {
     sshpass -p cabinet ssh -p "$SSH_PORT" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -235,6 +246,7 @@ test_install() {
     # Installation is not proven until a reboot has traversed login/PAM,
     # started the cabinet user's normal services and attached root Nucore.
     ssh_guest 'systemctl reboot' >/dev/null 2>&1 || true
+    wait_ssh_down
     wait_ssh
     # The bundled program may exit immediately in this ROM-less lab. Accept a
     # still-live backend rendezvous or a clean completed service, but never a
