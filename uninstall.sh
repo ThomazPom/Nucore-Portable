@@ -7,13 +7,18 @@
 set -e
 
 if [ "$EUID" -ne 0 ]; then
-    for esc in run0 sudo pkexec; do
-        if command -v "$esc" >/dev/null 2>&1; then
+    for esc in run0 pkexec sudo; do
+        # systemd may provide run0 even when the polkit authentication agent
+        # needed by an interactive non-root caller is absent (notably on a
+        # stripped Debian installation). Do not select that unusable path and
+        # hide a working pkexec or sudo fallback.
+        if command -v "$esc" >/dev/null 2>&1 &&
+           { [ "$esc" != run0 ] || command -v pkttyagent >/dev/null 2>&1; }; then
             echo "[uninstall.sh] re-launching under $esc to gain root..."
             case "$esc" in
                 run0)   exec run0 --description="nucore-portable uninstaller" -- "$0" "$@" ;;
-                sudo)   exec sudo "$0" "$@" ;;
                 pkexec) exec pkexec "$0" "$@" ;;
+                sudo)   exec sudo "$0" "$@" ;;
             esac
         fi
     done
