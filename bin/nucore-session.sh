@@ -1,6 +1,7 @@
 #!/bin/bash
-# User-side cabinet session and display-ready rendezvous. PAM/login or the
-# display manager creates the session; this script only hosts its backend.
+# Cabinet backend host and display-ready rendezvous. Standalone execution is
+# the login shell of the locked cabinet account, after /bin/login and PAM/logind
+# have established its real user/seat session.
 set -e
 
 # Debian installs Gamescope and its private gamescopereaper helper in
@@ -141,9 +142,10 @@ fi
 
 case "$BACKEND" in
     xorg)
-        # The login session supplies PAM/logind and user services. The root
-        # system service owns Xorg itself and attaches Nucore to it.
-        exec "$SELF" "${client_args[@]}"
+        # xinit keeps Xorg and its client in this login's cgroup, so ending the
+        # login releases the VT before maintenance starts.
+        exec xinit "$SELF" "${client_args[@]}" -- \
+            /usr/bin/Xorg :0 vt1 -nolisten tcp -noreset -s 0 -dpms
         ;;
     cage)
         exec cage -- "$SELF" "${client_args[@]}"

@@ -69,11 +69,11 @@ The installer presents one flat choice of cabinet host:
 | Choice | Session path | Role |
 |---|---|---|
 | **Existing display manager** | GDM/SDDM/LightDM → normal remembered desktop session | Recommended when available |
-| **Gamescope** | root service → standalone Gamescope | Gaming/scaling-oriented |
-| **Cage** | root service → Wayland kiosk | Minimal single application |
-| **Weston** | root service → Weston kiosk shell | Reference Wayland stack |
-| **Xorg** | root service → bare Xorg | Proven SDL 1.2/X11 path |
-| **Framebuffer / direct console** | root service → SDL direct display | Lowest-level experimental path |
+| **Gamescope** | cabinet login → standalone Gamescope | Gaming/scaling-oriented |
+| **Cage** | cabinet login → Wayland kiosk | Minimal single application |
+| **Weston** | cabinet login → Weston kiosk shell | Reference Wayland stack |
+| **Xorg** | cabinet login → bare Xorg | Proven SDL 1.2/X11 path |
+| **Framebuffer / direct console** | cabinet login → SDL direct display | Lowest-level experimental path |
 
 The display-manager choice is shown only when a supported manager exists. It
 enables autologin into the user's already selected desktop session. GNOME,
@@ -82,21 +82,24 @@ behind the fullscreen game. Nucore Portable neither identifies nor disables
 desktop-specific shells, panels or compositors. This is the generic price of
 reusing an arbitrary distribution-managed graphical session.
 
-Every standalone choice is owned directly by `nucore.service`. Before starting
-the backend, it starts the selected account's normal systemd user manager and
-`default.target`, allowing the distribution to provide D-Bus and its configured
-audio services. This is not an autologin and does not start a desktop. The
-account's shell, PAM configuration, home directory, SSH sessions and other VTs
-remain untouched.
+Every standalone choice uses one project-owned, locked, unprivileged account
+named `nucore-cabinet`. `agetty` autologs that account into tty1 through the
+normal `/bin/login` and PAM/logind path. Its project-owned login shell runs only
+the selected backend. This creates a real seat session, user manager, D-Bus and
+distribution-configured audio services without granting sudo, a password or an
+interactive shell. The selected human account, its shell, PAM configuration,
+home directory, SSH sessions and other VTs remain untouched.
 
 The backend launcher includes Debian's standard `/usr/games` program directory
 in its path. Gamescope is installed there and launches its packaged
 `gamescopereaper` helper by name; this path normally comes from a login shell,
-which standalone cabinet backends intentionally do not create.
+which this deliberately minimal cabinet login does not otherwise add.
 
 `nucore.service` remains a privileged system service and launches Nucore as
-root. Standalone backends share its private ephemeral runtime directory while
-audio and D-Bus use explicit sockets from the selected user's systemd manager.
+root. Standalone backends publish their display endpoints from the dedicated
+account's runtime directory; Nucore receives a private root runtime containing
+only a validated link to the selected Wayland socket. Audio and D-Bus use
+explicit sockets from that same real login session.
 In display-manager mode it reads only `DISPLAY`,
 `XAUTHORITY` and `WAYLAND_DISPLAY` from the environment that the normal desktop
 has already imported into `systemd --user`. This needs no autostart helper,
@@ -105,7 +108,7 @@ the autologged user. The same account can still be used independently through
 SSH when an SSH server has been configured by the machine owner.
 
 Standalone modes use an intentionally ephemeral rendezvous. During a run,
-there is one mode-0600 file under `/run/nucore-portable/runtime/`; `/run` is tmpfs,
+there is one mode-0600 file under `/run/user/<cabinet-uid>/nucore-portable/`; `/run` is tmpfs,
 not persistent storage. It is written through an atomic temporary rename, then
 the service removes it to signal completion. The session removes the empty
 directory as it exits. There is no PID file, lock file, separate “done” file,
@@ -147,10 +150,10 @@ offer an inapplicable Wayland/Xwayland choice. Cage is a pure Wayland kiosk in
 this architecture, so its only supported path—SDL12-compat with native
 Wayland—is selected automatically.
 
-Because Nucore and standalone compositors remain root, they use a private
-`XDG_RUNTIME_DIR` rather than claiming the selected user's runtime directory.
-The service validates their Wayland socket and exposes it through one
-ephemeral symbolic link inside that private runtime directory.
+Standalone compositors run as the dedicated logind user and use its genuine
+`XDG_RUNTIME_DIR`. Because Nucore remains root, it must not claim that directory
+as its own. The service validates the user-owned Wayland socket and exposes it
+through one ephemeral symbolic link inside root's private runtime directory.
 SDL2 therefore receives an ordinary relative `WAYLAND_DISPLAY` and can select
 its native Wayland backend normally. Native SDL 1.2 ignores that variable and
 can use Xwayland when available. Gamescope diagnostics go to the journal rather
@@ -234,8 +237,8 @@ All choices write `/etc/systemd/system/nucore.service` and record their mode
 under `/var/lib/nucore-portable/`. The display-manager path keeps
 `graphical.target` and enables DM autologin without changing the user's
 remembered GNOME, Plasma, X11 or Wayland session.
-Standalone paths select `multi-user.target` and reserve tty1 for the root
-service. They remember the previous target/getty state. On normal game exit
+Standalone paths select `multi-user.target` and reserve tty1 for the dedicated
+PAM/logind cabinet login. They remember the previous target/getty state. On normal game exit
 they can start the installed display manager or open a normal password-backed
 tty1 login for maintenance. Administrative service stops do not trigger that
 fallback. tty2 and later VTs, SSH, the account database, PAM and user profile
@@ -256,9 +259,10 @@ systemctl stop nucore
 ```
 
 `uninstall.sh` removes project-owned service and display-manager
-configuration (plus obsolete polkit files from older releases), restores the
-saved default target and tty1 getty state, and leaves unrelated configuration
-alone. Packages accepted during a backend prompt are not automatically removed:
+configuration (plus obsolete polkit files from older releases), terminates and
+removes the dedicated locked cabinet account when it created one, restores the
+saved default target and tty1 getty state, and leaves the human account and
+unrelated configuration alone. Packages accepted during a backend prompt are not automatically removed:
 they may have become dependencies of other software.
 It also removes Nucore-Portable's separate GRUB drop-in, when present, and
 regenerates GRUB without modifying the distribution's theme or the user's
@@ -952,9 +956,9 @@ sleep, and lid actions while it runs.
 
 After `./install.sh`, the root system unit already has the required privilege.
 Display-manager mode attaches to the logged-in desktop environment. Standalone
-mode owns its display backend directly and only starts the selected user's
-normal systemd `default.target` for distribution-managed services such as
-audio; that user never launches or elevates Nucore.
+mode obtains a real, locked, non-administrative cabinet login for its backend,
+seat and distribution-managed audio services. That user never launches or
+elevates Nucore; the independent root service does so.
 
 ### Interactive visual matrix
 
@@ -1209,10 +1213,10 @@ not in sudoers" and refuses. nucore-portable handles this transparently:
   different session view.
 * **Installed sessions (`./install.sh`)** keep the emulator in a uid-0 system
   service. Display-manager mode reuses GDM/SDDM/LightDM's normal session.
-  Standalone backends are owned by the service and start only the selected
-  user's systemd `default.target` for distribution services such as audio. No
-  autologin, shell replacement, profile hook, polkit grant or administrator
-  rights are added.
+  Standalone backends use a dedicated locked account through
+  `agetty → /bin/login → PAM/logind`; its shell is project-owned and cannot be
+  used interactively. The human account receives no shell replacement, profile
+  hook, polkit grant or administrator rights.
 
 **Override flags:** `--root=run0|pkexec|sudo|none` forces a specific
 tool; `--no-root` skips escalation entirely (only useful when caps are

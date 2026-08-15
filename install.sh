@@ -10,6 +10,9 @@ TTY=tty1
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
 BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
+CABINET_USER=nucore-cabinet
+CABINET_HOME=/var/lib/nucore-cabinet
+CABINET_SHELL=/usr/local/libexec/nucore-cabinet-login
 
 ask() {
     local prompt=$1 default=$2 answer
@@ -124,23 +127,23 @@ done
 if [ -z "$default_user" ] || [ "$default_user" = root ]; then
     default_user=$(getent passwd | awk -F: '$3>=1000&&$3<65534&&$7!~/(nologin|false)$/ {print $1;exit}')
 fi
-read -r -p "Cabinet session user [${default_user}]: " session_user
-session_user=${session_user:-$default_user}
-session_uid=$(id -u "$session_user" 2>/dev/null) || { echo "Unknown user" >&2; exit 2; }
-[ "$session_uid" -ge 1000 ] || { echo "Cabinet user must be unprivileged (UID >= 1000)" >&2; exit 2; }
+read -r -p "Maintenance/configuration user [${default_user}]: " owner_user
+owner_user=${owner_user:-$default_user}
+owner_uid=$(id -u "$owner_user" 2>/dev/null) || { echo "Unknown user" >&2; exit 2; }
+[ "$owner_uid" -ge 1000 ] || { echo "Maintenance user must be unprivileged (UID >= 1000)" >&2; exit 2; }
 
 checkout_writable=0
 if command -v runuser >/dev/null 2>&1; then
-    runuser -u "$session_user" -- test -w "$ROOT" && checkout_writable=1
-    runuser -u "$session_user" -- test -w "$(dirname -- "$ROOT")" && checkout_writable=1
+    runuser -u "$owner_user" -- test -w "$ROOT" && checkout_writable=1
+    runuser -u "$owner_user" -- test -w "$(dirname -- "$ROOT")" && checkout_writable=1
     if [ "$checkout_writable" -eq 0 ] &&
-       [ -n "$(runuser -u "$session_user" -- find "$ROOT" -xdev -writable -print -quit 2>/dev/null)" ]; then
+       [ -n "$(runuser -u "$owner_user" -- find "$ROOT" -xdev -writable -print -quit 2>/dev/null)" ]; then
         checkout_writable=1
     fi
 fi
 if [ "$checkout_writable" -eq 1 ]; then
     echo >&2
-    echo "SECURITY WARNING: $session_user can modify this checkout." >&2
+    echo "SECURITY WARNING: $owner_user can modify this checkout." >&2
     echo "The root service will execute code from it on boot." >&2
     echo "For a strict privilege boundary, install a root-owned checkout under /opt." >&2
     ask "Continue and trust this session user to modify Nucore Portable?" Y || exit 2
@@ -226,7 +229,9 @@ fi
 echo
 echo "About to install:"
 echo "  setup        : $backend"
-echo "  session user : $session_user (no privileges required)"
+echo "  maintenance  : $owner_user (unchanged, no privileges added)"
+[ "$backend" = display-manager ] || \
+    echo "  cabinet login: $CABINET_USER (dedicated, locked, no sudo)"
 echo "  launch       : $service_args"
 [ "$sdl_display" = auto ] || echo "  SDL display  : $sdl_display"
 echo "  config       : ${portable_config:-none}"
@@ -234,11 +239,16 @@ echo "  maintenance  : $maintenance"
 ask "Proceed?" Y || exit 0
 
 apt_source_created=0
+cabinet_user_created=0
 cleanup_failed_install() {
     local rc=$?
     trap - EXIT
     if [ "$rc" -ne 0 ] && [ "$apt_source_created" -eq 1 ]; then
         rm -f "$BACKPORTS_APT_SOURCE"
+    fi
+    if [ "$rc" -ne 0 ] && [ "$cabinet_user_created" -eq 1 ]; then
+        userdel -r "$CABINET_USER" 2>/dev/null || true
+        rm -f "$CABINET_SHELL"
     fi
     exit "$rc"
 }
@@ -285,6 +295,7 @@ case "$backend" in
     weston)    command -v weston >/dev/null 2>&1 || missing+=(weston) ;;
     xorg)
         command -v Xorg >/dev/null 2>&1 || missing+=(xserver-xorg-core)
+        command -v xinit >/dev/null 2>&1 || missing+=(xinit)
         [ -e /usr/lib/xorg/modules/input/libinput_drv.so ] || missing+=(xserver-xorg-input-libinput)
         ;;
 esac
@@ -295,7 +306,7 @@ if [ "$sdl12_compat" -eq 0 ] || [ "$sdl_display" = xwayland ]; then
             ;;
     esac
     case "$backend" in
-        gamescope|weston)
+        gamescope|weston|xorg)
             command -v xhost >/dev/null 2>&1 || missing+=(x11-xserver-utils)
             ;;
     esac
@@ -376,11 +387,39 @@ EOF
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
 fi
 
+session_user=$owner_user
+session_uid=$owner_uid
+if [ "$backend" != display-manager ]; then
+    if getent passwd "$CABINET_USER" >/dev/null; then
+        echo "install.sh: reserved account '$CABINET_USER' already exists" >&2
+        echo "Remove that unrelated account or choose display-manager mode." >&2
+        exit 3
+    fi
+    install -d -m 0755 "$(dirname -- "$CABINET_SHELL")"
+    cabinet_shell_tmp=$(mktemp "$(dirname -- "$CABINET_SHELL")/.nucore-cabinet-login.XXXXXX")
+    {
+        echo '#!/bin/sh'
+        printf 'exec systemd-cat --identifier=nucore-cabinet-session -- %q\n' \
+            "$ROOT/bin/nucore-session.sh"
+    } > "$cabinet_shell_tmp"
+    chmod 0755 "$cabinet_shell_tmp"
+    mv -f "$cabinet_shell_tmp" "$CABINET_SHELL"
+    useradd --create-home --home-dir "$CABINET_HOME" --user-group \
+        --shell "$CABINET_SHELL" "$CABINET_USER"
+    passwd --lock "$CABINET_USER" >/dev/null
+    cabinet_user_created=1
+    session_user=$CABINET_USER
+    session_uid=$(id -u "$CABINET_USER")
+    session_gid=$(id -g "$CABINET_USER")
+    install -m 0600 -o "$session_uid" -g "$session_gid" /dev/null "$CABINET_HOME/.hushlogin"
+fi
+
 install -d -m 0755 "$STATE" "$CONF_DIR"
 [ -f "$STATE/previous-default-target" ] || systemctl get-default > "$STATE/previous-default-target"
 [ -f "$STATE/getty-tty1-was-enabled" ] ||
     systemctl is-enabled getty@tty1.service > "$STATE/getty-tty1-was-enabled" 2>/dev/null || true
 printf '%s\n' "$backend" > "$STATE/install-mode"
+[ "$cabinet_user_created" -eq 0 ] || printf '%s\n' "$CABINET_USER" > "$STATE/cabinet-user-created"
 
 apt_source_created=0
 
@@ -389,6 +428,7 @@ cat > "$CONF" <<EOF
 BACKEND=$backend
 SESSION_USER=$session_user
 SESSION_UID=$session_uid
+OWNER_USER=$owner_user
 MAINTENANCE=$maintenance
 SDL12_COMPAT=$sdl12_compat
 SDL_DISPLAY=$sdl_display
@@ -469,8 +509,20 @@ if [ "$backend" = display-manager ]; then
     rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 else
     rm -f /etc/xdg/autostart/nucore-cabinet.desktop
-    rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
-    rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+    install -d -m 0755 /etc/systemd/system/getty@tty1.service.d
+    getty_dropin_tmp=$(mktemp /etc/systemd/system/getty@tty1.service.d/.49-nucore-portable.conf.XXXXXX)
+    cat > "$getty_dropin_tmp" <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $CABINET_USER --noissue --noclear %I \$TERM
+Restart=no
+TimeoutStopSec=10
+TTYVTDisallocate=no
+StandardOutput=journal
+StandardError=journal
+EOF
+    chmod 0644 "$getty_dropin_tmp"
+    mv -f "$getty_dropin_tmp" /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 fi
 
 # Configure autologin without replacing the user's remembered desktop session.
@@ -485,7 +537,7 @@ if [ "$backend" = display-manager ]; then
 # >>> nucore-portable autologin >>>
 [daemon]
 AutomaticLoginEnable=true
-AutomaticLogin=$session_user
+AutomaticLogin=$owner_user
 # <<< nucore-portable autologin <<<
 EOF
             ;;
@@ -493,7 +545,7 @@ EOF
             install -d -m 0755 /etc/sddm.conf.d
             cat > /etc/sddm.conf.d/49-nucore.conf <<EOF
 [Autologin]
-User=$session_user
+User=$owner_user
 Relogin=false
 EOF
             ;;
@@ -501,7 +553,7 @@ EOF
             install -d -m 0755 /etc/lightdm/lightdm.conf.d
             cat > /etc/lightdm/lightdm.conf.d/49-nucore.conf <<EOF
 [Seat:*]
-autologin-user=$session_user
+autologin-user=$owner_user
 autologin-user-timeout=0
 EOF
             ;;
@@ -515,16 +567,16 @@ if [ "$backend" = display-manager ]; then
     tty_directives="StandardInput=null"
     install_target=graphical.target
 elif [ "$backend" = console ]; then
-    unit_after="user@${session_uid}.service"
-    unit_wants="user@${session_uid}.service"
+    unit_after="getty@tty1.service"
+    unit_wants="getty@tty1.service"
     tty_directives="StandardInput=tty-force
 TTYPath=/dev/$TTY
 TTYReset=yes
 TTYVTDisallocate=no"
     install_target=multi-user.target
 else
-    unit_after="user@${session_uid}.service"
-    unit_wants="user@${session_uid}.service"
+    unit_after="getty@tty1.service"
+    unit_wants="getty@tty1.service"
     tty_directives="StandardInput=null"
     install_target=multi-user.target
 fi
@@ -544,6 +596,8 @@ Type=simple
 WorkingDirectory=$ROOT
 ExecStart="$ROOT/bin/nucore-service.sh"
 Restart=no
+KillMode=control-group
+TimeoutStopSec=15
 $tty_directives
 StandardOutput=journal
 StandardError=journal
@@ -557,7 +611,7 @@ chmod 0644 "$service_tmp"
 mv -f "$service_tmp" /etc/systemd/system/nucore.service
 test -s /etc/systemd/system/nucore.service
 [ "$backend" = display-manager ] ||
-    test ! -e /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
+    test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 
 systemctl daemon-reload
 systemctl enable nucore.service
@@ -565,11 +619,11 @@ if [ "$backend" = display-manager ]; then
     systemctl set-default graphical.target
 else
     systemctl unmask getty@tty1.service
-    systemctl disable getty@tty1.service 2>/dev/null || true
+    systemctl enable getty@tty1.service
     systemctl set-default multi-user.target
 fi
 
 echo
-echo "Installed: root nucore.service -> $backend; $session_user supplies distro user services"
+echo "Installed: $session_user PAM/logind session -> $backend -> root nucore.service"
 echo "Next boot will use the new cabinet session architecture."
 echo "Logs: journalctl -u nucore -f"

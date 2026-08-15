@@ -29,12 +29,15 @@ BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
 LEGACY_GAMESCOPE_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-gamescope.sources
 INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
+CABINET_USER=""
+[ -f "$STATE_DIR/cabinet-user-created" ] && CABINET_USER=$(sed -n '1p' "$STATE_DIR/cabinet-user-created")
 systemctl stop nucore.service    2>/dev/null || true
 systemctl disable nucore.service 2>/dev/null || true
-# Never stop tty1 here: the administrator may be running this very script from
-# the maintenance login hosted by getty@tty1. Removing its drop-ins and
-# restoring its enablement is sufficient; the current login may live until the
-# user exits or reboots.
+# A project-created cabinet login can safely be stopped: it has no interactive
+# maintenance shell. Older installations had no dedicated account, so retain
+# their current tty session until the administrator exits or reboots.
+[ "$CABINET_USER" != nucore-cabinet ] || \
+    systemctl stop getty@tty1.service 2>/dev/null || true
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
 # Remove files from the short-lived global-login implementation too, so this
@@ -53,6 +56,21 @@ rm -f /etc/nucore-portable/session.conf
 rm -f /etc/nucore-portable/launch.args
 rmdir /etc/nucore-portable 2>/dev/null || true
 systemctl daemon-reload
+
+if [ "$CABINET_USER" = nucore-cabinet ]; then
+    if getent passwd "$CABINET_USER" >/dev/null; then
+        echo "[+] removing dedicated cabinet account $CABINET_USER"
+        CABINET_UID=$(id -u "$CABINET_USER")
+        loginctl terminate-user "$CABINET_USER" 2>/dev/null || true
+        systemctl stop "user@${CABINET_UID}.service" 2>/dev/null || true
+        userdel -r "$CABINET_USER" 2>/dev/null || {
+            echo "uninstall.sh: could not remove $CABINET_USER" >&2
+            exit 3
+        }
+    fi
+    rm -f /usr/local/libexec/nucore-cabinet-login
+    rmdir /usr/local/libexec 2>/dev/null || true
+fi
 
 if [ -s "$STATE_DIR/original-login-shell" ] &&
    [ -s "$STATE_DIR/login-shell-user" ] &&
@@ -191,6 +209,7 @@ rm -f "$STATE_DIR/install-mode" \
       "$STATE_DIR/gdm-session-state" \
       "$STATE_DIR/gdm-xsession-state" \
       "$STATE_DIR/install-user" \
+      "$STATE_DIR/cabinet-user-created" \
       "$STATE_DIR/hushlogin-created"
 rmdir "$STATE_DIR" 2>/dev/null || true
 

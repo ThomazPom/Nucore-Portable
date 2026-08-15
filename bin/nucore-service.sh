@@ -1,7 +1,6 @@
 #!/bin/bash
-# Root-side service launcher. Desktop mode attaches to the distribution's
-# login session; standalone mode owns its backend and only primes the selected
-# user's normal systemd services for audio and D-Bus.
+# Root-side service launcher. It attaches root Nucore to either the normal
+# display-manager login or the dedicated standalone PAM/logind login.
 set -e
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -10,6 +9,8 @@ CONF=/etc/nucore-portable/session.conf
 [ -r "$CONF" ] || { echo "nucore-service: missing $CONF" >&2; exit 3; }
 
 SESSION_USER=$(sed -n 's/^SESSION_USER=//p' "$CONF" | head -n1)
+OWNER_USER=$(sed -n 's/^OWNER_USER=//p' "$CONF" | head -n1)
+[ -n "$OWNER_USER" ] || OWNER_USER=$SESSION_USER
 BACKEND=$(sed -n 's/^BACKEND=//p' "$CONF" | head -n1)
 MAINTENANCE=$(sed -n 's/^MAINTENANCE=//p' "$CONF" | head -n1)
 SDL_DISPLAY=$(sed -n 's/^SDL_DISPLAY=//p' "$CONF" | head -n1)
@@ -19,23 +20,42 @@ SDL12_COMPAT=$(sed -n 's/^SDL12_COMPAT=//p' "$CONF" | head -n1)
 SESSION_UID=$(id -u "$SESSION_USER")
 RUNTIME_DIR="/run/user/$SESSION_UID"
 ROOT_RUNTIME_DIR=/run/nucore-portable/runtime
-SESSION_DIR="$ROOT_RUNTIME_DIR/nucore-portable"
+SESSION_DIR="$RUNTIME_DIR/nucore-portable"
 ENV_FILE="$SESSION_DIR/display-environment"
 ARGS_FILE=/etc/nucore-portable/launch.args
 [ -r "$ARGS_FILE" ] || { echo "nucore-service: missing $ARGS_FILE" >&2; exit 3; }
 mapfile -t LAUNCH_ARGS < "$ARGS_FILE"
+nucore_pid=""
+
+stop_nucore() {
+    local i=0
+    [ -n "$nucore_pid" ] || return 0
+    kill -TERM -- "-$nucore_pid" 2>/dev/null || true
+    while kill -0 "$nucore_pid" 2>/dev/null && [ "$i" -lt 50 ]; do
+        i=$((i + 1)); sleep 0.1
+    done
+    if kill -0 "$nucore_pid" 2>/dev/null; then
+        echo "nucore-service: Nucore ignored TERM; sending KILL" >&2
+        kill -KILL -- "-$nucore_pid" 2>/dev/null || true
+    fi
+    wait "$nucore_pid" 2>/dev/null || true
+    nucore_pid=""
+}
 
 cleanup() {
-    [ -z "${backend_pid:-}" ] || kill "$backend_pid" 2>/dev/null || true
-    [ -z "${backend_pid:-}" ] || wait "$backend_pid" 2>/dev/null || true
-    [ -z "${session_host_pid:-}" ] || kill "$session_host_pid" 2>/dev/null || true
-    [ -z "${session_host_pid:-}" ] || wait "$session_host_pid" 2>/dev/null || true
+    stop_nucore
+    if [ "$BACKEND" != display-manager ]; then
+        # Removing the rendezvous asks the login-owned client to exit. Stopping
+        # its getty then closes the complete login/compositor cgroup before a
+        # maintenance display manager is allowed to acquire the seat.
+        rm -f "$ENV_FILE" "$SESSION_DIR"/environment.* 2>/dev/null || true
+        systemctl stop getty@tty1.service 2>/dev/null || true
+    fi
     rm -f "$ROOT_RUNTIME_DIR/wayland-client" 2>/dev/null || true
     rmdir "$ROOT_RUNTIME_DIR" /run/nucore-portable 2>/dev/null || true
     [ "$BACKEND" != display-manager ] || return 0
     [ -d "$SESSION_DIR" ] || return 0
-    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = 0 ] || return 0
-    rm -f "$ENV_FILE" "$SESSION_DIR"/environment.* 2>/dev/null || true
+    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = "$SESSION_UID" ] || return 0
     rmdir "$SESSION_DIR" 2>/dev/null || true
 }
 start_maintenance() {
@@ -61,8 +81,6 @@ EOF
 administrative_stop() { cleanup; exit 0; }
 trap administrative_stop HUP INT TERM
 unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
-backend_pid=""
-session_host_pid=""
 
 if [ "$BACKEND" = display-manager ]; then
     # A normal desktop session imports its live display addresses into the
@@ -86,24 +104,17 @@ if [ "$BACKEND" = display-manager ]; then
         echo "nucore-service: desktop display environment timeout" >&2; exit 4;
     }
 else
-    # Start the distribution's ordinary enabled user services without logging
-    # the account into a shell or desktop. This keeps SSH, passwd and every
-    # recovery VT completely outside the cabinet launch mechanism.
-    systemctl start "user@${SESSION_UID}.service"
-    systemctl --user --machine="${SESSION_USER}@" start default.target
-    echo "nucore-service: default user services ready for $SESSION_USER" >&2
-    install -d -m 0700 -o root -g root "$ROOT_RUNTIME_DIR"
-    session_env=(XDG_RUNTIME_DIR="$ROOT_RUNTIME_DIR")
-    [ ! -S "$RUNTIME_DIR/bus" ] ||
-        session_env+=(DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus")
-    [ ! -S "$RUNTIME_DIR/pulse/native" ] ||
-        session_env+=(PULSE_SERVER="unix:$RUNTIME_DIR/pulse/native")
-    env "${session_env[@]}" "$ROOT_DIR/bin/nucore-session.sh" &
-    session_host_pid=$!
-
+    # agetty -> /bin/login -> PAM/logind owns the backend and publishes the
+    # three dynamic display endpoints. Do not synthesize a user manager or
+    # start a compositor from this privileged service.
     i=0
+    getty_seen=0
     while [ "$i" -lt 1800 ] && [ ! -f "$ENV_FILE" ]; do
-        kill -0 "$session_host_pid" 2>/dev/null || break
+        if systemctl is-active --quiet getty@tty1.service; then
+            getty_seen=1
+        elif [ "$getty_seen" -eq 1 ]; then
+            break
+        fi
         i=$((i + 1)); sleep 0.1
     done
     [ -f "$ENV_FILE" ] || {
@@ -111,41 +122,16 @@ else
         start_maintenance
         exit 4
     }
-    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = 0 ] || {
-        echo "nucore-service: refusing root backend directory with wrong owner" >&2; exit 4;
+    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = "$SESSION_UID" ] || {
+        echo "nucore-service: refusing cabinet session directory with wrong owner" >&2; exit 4;
     }
-    [ "$(stat -c %u "$ENV_FILE")" = 0 ] || {
+    [ "$(stat -c %u "$ENV_FILE")" = "$SESSION_UID" ] || {
         echo "nucore-service: refusing environment with wrong owner" >&2; exit 4;
     }
 fi
 
-# Xorg is deliberately owned by this already-privileged system service. The
-# user login exists for PAM/logind/audio, not to elevate or own the display
-# server. Root can acquire the cabinet VT directly on both real hardware and
-# simple QEMU VGA devices.
-if [ "$BACKEND" = xorg ]; then
-    Xorg :0 vt1 -nolisten tcp -noreset -s 0 -dpms &
-    backend_pid=$!
-    i=0
-    while [ "$i" -lt 100 ] && [ ! -S /tmp/.X11-unix/X0 ]; do
-        kill -0 "$backend_pid" 2>/dev/null || {
-            echo "nucore-service: root Xorg failed to initialize" >&2
-            start_maintenance
-            exit 4
-        }
-        i=$((i + 1)); sleep 0.1
-    done
-    [ -S /tmp/.X11-unix/X0 ] || {
-        echo "nucore-service: root Xorg readiness timeout" >&2
-        start_maintenance
-        exit 4
-    }
-    export DISPLAY=:0
-    export XAUTHORITY=/dev/null
-fi
-
 import_display_environment() {
-    if [ "$BACKEND" = display-manager ]; then endpoint_owner=$SESSION_UID; else endpoint_owner=0; fi
+    endpoint_owner=$SESSION_UID
     while IFS='=' read -r name value; do
         case "$name" in
             DISPLAY)
@@ -191,14 +177,10 @@ wayland_socket=""
 if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     case "$WAYLAND_DISPLAY" in
         /*) wayland_socket=$WAYLAND_DISPLAY ;;
-        *)  if [ "$BACKEND" = display-manager ]; then
-                wayland_socket="$RUNTIME_DIR/$WAYLAND_DISPLAY"
-            else
-                wayland_socket="$ROOT_RUNTIME_DIR/$WAYLAND_DISPLAY"
-            fi ;;
+        *)  wayland_socket="$RUNTIME_DIR/$WAYLAND_DISPLAY" ;;
     esac
     if [ -S "$wayland_socket" ] &&
-       [ "$(stat -c %u "$wayland_socket" 2>/dev/null)" = 0 ]; then
+       [ "$(stat -c %u "$wayland_socket" 2>/dev/null)" = "$SESSION_UID" ]; then
         :
     else
         wayland_socket=""
@@ -214,7 +196,7 @@ if [ "$SDL12_COMPAT" != 1 ] || [ "$SDL_DISPLAY" = xwayland ]; then
     unset WAYLAND_DISPLAY
 fi
 
-SESSION_HOME=$(getent passwd "$SESSION_USER" | cut -d: -f6)
+SESSION_HOME=$(getent passwd "$OWNER_USER" | cut -d: -f6)
 export HOME="$SESSION_HOME"
 # Nucore is deliberately a root process.  A root process must not claim the
 # login user's XDG runtime directory as its own. Give it a private directory;
@@ -250,7 +232,10 @@ if [ "$SDL12_COMPAT" = 0 ] && [ "$BACKEND" != console ] &&
 fi
 
 status=0
-"$ROOT_DIR/start.sh" --no-root --no-inhibit "${LAUNCH_ARGS[@]}" "$@" || status=$?
+setsid "$ROOT_DIR/start.sh" --no-root --no-inhibit "${LAUNCH_ARGS[@]}" "$@" &
+nucore_pid=$!
+wait "$nucore_pid" || status=$?
+nucore_pid=""
 cleanup
 trap - HUP INT TERM
 [ "${NUCORE_TEST_NO_MAINTENANCE:-0}" = 1 ] || start_maintenance
