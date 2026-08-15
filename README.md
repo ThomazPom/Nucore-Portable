@@ -465,7 +465,7 @@ Examples:
 | `--root=pkexec` | auto | Force polkit `pkexec` privilege escalation |
 | `--root=sudo` | auto | Force classic `sudo` privilege escalation |
 | `--root=none` / `--no-root` | auto | Refuse escalation; useful only when capabilities are already present or for limited tests |
-| `--no-inhibit` | off | Do not prevent desktop idle, locking, sleep, or lid actions |
+| `--no-inhibit` | off | Do not hold the logind idle/sleep/lid/power inhibitor |
 | `--` | — | Stop parsing launcher options |
 | `-h`, `--help` | — | Print launcher help and exit |
 
@@ -962,8 +962,9 @@ PulseAudio owns the device.
 `start.sh` auto-detects how to grant raw I/O and real-time scheduling access.
 It tries existing privileges, then `run0`, `pkexec`, and `sudo`. Display and
 runtime variables are explicitly forwarded so the elevated emulator remains
-inside the current graphical session. `systemd-inhibit` prevents locking,
-sleep, and lid actions while it runs.
+inside the current graphical session. `systemd-inhibit` holds a system-wide
+logind fd lock against idle handling, sleep and selected lid/power-key actions
+while it runs. The installed service holds the same lock.
 
 After `./install.sh`, the root system unit already has the required privilege.
 Display-manager mode attaches to the logged-in desktop environment. Standalone
@@ -1214,14 +1215,16 @@ not in sudoers" and refuses. nucore-portable handles this transparently:
   then session lock-out). With the explicit forwarding, root can read
   the user's `$XAUTHORITY` cookie file directly and SDL connects to
   X/Wayland normally.
-* **Idle / lock suppression.** Every launch is also wrapped in
+* **Idle / power suppression.** Every launch, including the installed system
+  service, is wrapped in
   `systemd-inhibit --what=idle:sleep:handle-lid-switch:handle-power-key:handle-suspend-key`,
-  registered against your current logind session. As long as nucore is
-  running, the surrounding GNOME/KDE desktop will not auto-idle, lock
-  the screen, dim, suspend or react to the lid closing — same API
-  GNOME's own video player uses. The inhibitor is held on *your*
-  session, so it works even when escalation puts nucore itself in a
-  different session view.
+  using systemd-logind's system-bus inhibitor API. As long as Nucore is
+  running, logind will not consider the machine idle, suspend it, or process
+  the selected lid/power-key actions. Its fd lock dies with the launcher; no
+  PID, lock or completion file is needed. In display-manager mode, a separate
+  five-second best-effort adapter closes a login overview only when the user
+  bus actually exposes GNOME Shell's or KWin's public overview interface.
+  Standalone cabinet backends have no desktop overview to close.
 * **Installed sessions (`./install.sh`)** keep the emulator in a uid-0 system
   service. Display-manager mode reuses GDM/SDDM/LightDM's normal session.
   Standalone backends use a dedicated locked account through

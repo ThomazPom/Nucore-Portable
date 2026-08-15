@@ -81,12 +81,11 @@
 #   Force a specific path with --root=run0|pkexec|sudo|none, or --no-root
 #   to refuse escalation entirely.
 #
-# Idle / lock suppression:
-#   The launch is wrapped in `systemd-inhibit` so the surrounding GNOME/KDE
-#   desktop will not auto-idle, lock, sleep or honour the lid switch while
-#   nucore is running. The inhibitor lock is registered against THIS shell's
-#   logind session (i.e. the user's graphical session), so it works even
-#   when run0/pkexec puts nucore itself in a different session view.
+# Idle / power suppression:
+#   The launch is wrapped in `systemd-inhibit` so logind will not consider the
+#   system idle, suspend it, or handle the selected power/lid keys while Nucore
+#   is running. This is a system-bus logind fd lock, not a borrowed user D-Bus
+#   connection, so it also works from the installed root service.
 #   Disable with --no-inhibit.
 
 set -e
@@ -279,18 +278,15 @@ CMD=("$SCRIPT_DIR/bin/bundled.sh" "${BUNDLE_OPTIONS[@]}" "$MODE" \
      "$SCRIPT_DIR/bin/$BINARY" \
      "$GAME" "${ARGS[@]}")
 
-# Wrap with systemd-inhibit so the surrounding GNOME/KDE session does not
-# auto-idle, lock, sleep or honour the lid switch while nucore is running.
-# The inhibitor lock is registered against THIS shell's logind session
-# (i.e. the user's graphical session), so it works even if escalation
-# (run0/pkexec) puts nucore itself in a different session view.
+# Wrap with a system-bus logind fd lock. It follows the command lifetime and
+# works both before privilege escalation and inside the installed root service.
 if [ "$USE_INHIBIT" -eq 1 ] && command -v systemd-inhibit >/dev/null 2>&1; then
     INHIBIT=(systemd-inhibit \
         --what=idle:sleep:handle-lid-switch:handle-power-key:handle-suspend-key \
         --who="nucore-portable" \
         --why="Pinball 2000 emulator running" \
         --mode=block)
-    echo "+ idle/lock inhibitor: held until nucore exits"
+    echo "+ idle/power inhibitor: held until nucore exits"
 else
     INHIBIT=()
 fi

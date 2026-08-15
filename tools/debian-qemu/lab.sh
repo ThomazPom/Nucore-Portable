@@ -184,14 +184,26 @@ expect {
 }
 expect {
     -re {Maintenance/configuration user} {
-        send -- [string map {"\n" "\r"} $env(LAB_ANSWERS)]
+        # A burst of complete lines can be echoed by the remote PTY yet be
+        # discarded between the installer's successive reads. Pace them like
+        # real terminal input so every answer reaches its matching prompt.
+        foreach answer [split [string trimright $env(LAB_ANSWERS) "\n"] "\n"] {
+            send -- "$answer\r"
+            after 150
+        }
     }
     timeout { exit 124 }
     eof { exit 125 }
 }
-expect eof
-set result [wait]
-exit [lindex $result 3]
+expect {
+    -re {Enable Debian backports[^?]*\?} { send -- "y\r"; exp_continue }
+    -re {Install them with APT[^?]*\?} { send -- "y\r"; exp_continue }
+    eof {
+        set result [wait]
+        exit [lindex $result 3]
+    }
+    timeout { exit 124 }
+}
 EXPECT_EOF
 }
 
@@ -207,10 +219,10 @@ test_install() {
     # game, Pinbox, watchdog, optional SDL/ASIX, fullscreen, bpp, maintenance,
     # quiet boot, zero GRUB, proceed, and any backend package installation.
     case "$backend" in
-        console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\ny\n' ;;
-        cage) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n32\ny\ny\ny\ny\ny\n' ;;
-        gamescope) answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\ny\n' ;;
-        *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\n' ;;
+        console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\n' ;;
+        cage) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n32\ny\ny\ny\n' ;;
+        gamescope) answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\n' ;;
+        *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\n' ;;
     esac
     install_as_cabinet "$backend" "$answers"
     ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && test \"\$(getent passwd nucore-cabinet | cut -d: -f7)\" = /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-wm && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
@@ -223,6 +235,9 @@ test_install() {
     # backend/session failure. The login journal and user manager prove this is
     # a real PAM/logind session rather than a synthesized runtime.
     ssh_guest "uid=\$(id -u nucore-cabinet); journalctl -b -u getty@tty1.service --no-pager | grep -q 'session opened for user nucore-cabinet'; for i in \$(seq 1 100); do systemctl is-active --quiet nucore.service && test -f /run/user/\$uid/nucore-portable/display-environment && break; sleep .1; done; systemctl is-active --quiet user@\$uid.service && { systemctl is-active --quiet nucore.service || test \"\$(systemctl show -p Result --value nucore.service)\" = success; } && { test -f /run/user/\$uid/nucore-portable/display-environment || ! systemctl is-active --quiet nucore.service; }"
+    # The installed service used to pass --no-inhibit even though manual
+    # start.sh launches held a logind lock. Catch that split explicitly.
+    ssh_guest 'for i in $(seq 1 100); do systemd-inhibit --list --no-pager --no-legend | awk '\''$1 == "nucore-portable" && $NF == "block" { found=1 } END { exit !found }'\'' && exit 0; systemctl is-active --quiet nucore.service || break; sleep .1; done; exit 1'
     ssh_guest "! journalctl -b -u getty@tty1.service -u nucore.service --no-pager | grep -qi 'permission denied'"
     if [ "$backend" = xorg ]; then
         # Prove the backend process actually ran. A cleanly exited ROM-less

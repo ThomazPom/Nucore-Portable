@@ -5,6 +5,34 @@ set -e
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+# Display-manager sessions may enter a compositor-owned overview during login.
+# Wayland has no generic request for closing that UI, so probe the two public
+# compositor interfaces we support instead of guessing the current desktop.
+# This helper is invoked below as the unprivileged session user.
+if [ "${1:-}" = --dismiss-overview ]; then
+    command -v busctl >/dev/null 2>&1 || exit 0
+    for _ in $(seq 1 50); do
+        if busctl --user --quiet status org.gnome.Shell >/dev/null 2>&1; then
+            busctl --user set-property org.gnome.Shell /org/gnome/Shell \
+                org.gnome.Shell OverviewActive b false >/dev/null 2>&1 || true
+        fi
+        if busctl --user --quiet status org.kde.KWin >/dev/null 2>&1; then
+            active_effects=$(busctl --user get-property org.kde.KWin /Effects \
+                org.kde.kwin.Effects activeEffects 2>/dev/null || true)
+            case "$active_effects" in
+                *'"overview"'*)
+                    busctl --user call org.kde.KWin /Effects \
+                        org.kde.kwin.Effects toggleEffect s overview \
+                        >/dev/null 2>&1 || true
+                    ;;
+            esac
+        fi
+        sleep 0.1
+    done
+    exit 0
+fi
+
 CONF=/etc/nucore-portable/session.conf
 [ -r "$CONF" ] || { echo "nucore-service: missing $CONF" >&2; exit 3; }
 
@@ -246,6 +274,20 @@ if [ -S "$RUNTIME_DIR/bus" ]; then
 else
     unset DBUS_SESSION_BUS_ADDRESS
 fi
+
+# A login overview can remain above a correctly fullscreen SDL window. Run the
+# same capability-based adapters as Encore, only for a reused desktop session.
+# setpriv drops to the real session identity without opening another PAM login.
+if [ "$BACKEND" = display-manager ] && [ -S "$RUNTIME_DIR/bus" ] &&
+   command -v setpriv >/dev/null 2>&1; then
+    SESSION_GID=$(id -g "$SESSION_USER")
+    setpriv --reuid="$SESSION_UID" --regid="$SESSION_GID" --init-groups \
+        --no-new-privs --inh-caps=-all --ambient-caps=-all --bounding-set=-all \
+        env HOME="$SESSION_HOME" USER="$SESSION_USER" LOGNAME="$SESSION_USER" \
+            XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus" \
+            "$0" --dismiss-overview &
+fi
 if [ -S "$RUNTIME_DIR/pulse/native" ]; then
     export PULSE_SERVER="unix:$RUNTIME_DIR/pulse/native"
 else
@@ -264,7 +306,9 @@ if [ "$SDL12_COMPAT" = 0 ] && [ "$BACKEND" != console ] &&
 fi
 
 status=0
-setsid "$ROOT_DIR/start.sh" --no-root --no-inhibit "${LAUNCH_ARGS[@]}" "$@" &
+# start.sh's systemd-inhibit wrapper talks to logind on the system bus and is
+# valid from this root service. Its fd lock follows Nucore's exact lifetime.
+setsid "$ROOT_DIR/start.sh" --no-root "${LAUNCH_ARGS[@]}" "$@" &
 nucore_pid=$!
 wait "$nucore_pid" || status=$?
 nucore_pid=""

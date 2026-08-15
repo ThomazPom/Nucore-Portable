@@ -282,6 +282,12 @@ if [ "$sdl12_compat" -eq 1 ] && [ "$sdl_display" = wayland ] &&
 fi
 
 missing=()
+# The cabinet lifecycle relies on logind inhibitors in every mode. The
+# display-manager overview adapter additionally uses busctl and setpriv; both
+# are ordinary systemd/util-linux infrastructure, not project daemons.
+command -v systemd-inhibit >/dev/null 2>&1 || missing+=(systemd)
+command -v busctl >/dev/null 2>&1 || missing+=(systemd)
+command -v setpriv >/dev/null 2>&1 || missing+=(util-linux)
 # The bundled 32-bit ALSA library still consumes the distribution's
 # architecture-independent ALSA configuration. A stripped netinst does not
 # necessarily contain it.
