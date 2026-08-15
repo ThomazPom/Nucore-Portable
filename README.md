@@ -89,6 +89,11 @@ audio services. This is not an autologin and does not start a desktop. The
 account's shell, PAM configuration, home directory, SSH sessions and other VTs
 remain untouched.
 
+The backend launcher includes Debian's standard `/usr/games` program directory
+in its path. Gamescope is installed there and launches its packaged
+`gamescopereaper` helper by name; this path normally comes from a login shell,
+which standalone cabinet backends intentionally do not create.
+
 `nucore.service` remains a privileged system service and launches Nucore as
 root. Standalone backends share its private ephemeral runtime directory while
 audio and D-Bus use explicit sockets from the selected user's systemd manager.

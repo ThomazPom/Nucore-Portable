@@ -3,6 +3,14 @@
 # display manager creates the session; this script only hosts its backend.
 set -e
 
+# Debian installs Gamescope and its private gamescopereaper helper in
+# /usr/games. Login shells normally add it, but standalone cabinet backends do
+# not create a login shell. Add it once for both installed and manual runs.
+case ":$PATH:" in
+    *:/usr/games:*) ;;
+    *) PATH=$PATH:/usr/games; export PATH ;;
+esac
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 CONF=/etc/nucore-portable/session.conf
