@@ -319,11 +319,28 @@ PRESERVE_VARS=(DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR HOME \
                SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR)
 
 pick_escalator() {
+    escalator_available() {
+        case "$1" in
+            run0)
+                # Debian ships run0 with systemd but only Suggests polkitd.
+                # A stripped installation can therefore have run0 without the
+                # pkttyagent needed for interactive authentication.
+                command -v run0 >/dev/null 2>&1 &&
+                    command -v pkttyagent >/dev/null 2>&1
+                ;;
+            sudo|pkexec) command -v "$1" >/dev/null 2>&1 ;;
+            *) return 1 ;;
+        esac
+    }
     case "$ROOT_PREF" in
         none)   echo ""; return 0 ;;
         run0|sudo|pkexec)
-            command -v "$ROOT_PREF" >/dev/null 2>&1 || {
-                echo "start.sh: --root=$ROOT_PREF requested but '$ROOT_PREF' not in PATH" >&2
+            escalator_available "$ROOT_PREF" || {
+                if [ "$ROOT_PREF" = run0 ] && command -v run0 >/dev/null 2>&1; then
+                    echo "start.sh: --root=run0 needs pkttyagent (Debian package: polkitd)" >&2
+                else
+                    echo "start.sh: --root=$ROOT_PREF is unavailable" >&2
+                fi
                 exit 4
             }
             echo "$ROOT_PREF"; return 0 ;;
@@ -335,7 +352,7 @@ pick_escalator() {
     # pkexec next: same auth model on systems without systemd 256.
     # sudo last: works for users in the sudoers file.
     for c in run0 pkexec sudo; do
-        command -v "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }
+        escalator_available "$c" && { echo "$c"; return 0; }
     done
     echo ""
 }
@@ -350,8 +367,8 @@ Pick one of these:
   • Run the kiosk installer once: sudo ./install.sh
     (sets up a root system service — no escalation tool is needed at runtime.
      RECOMMENDED for cabinet mode.)
-  • Install run0 (systemd >=256, default on Debian 13 trixie),
-    or install policykit-1 (pkexec), or add yourself to the sudoers file.
+  • Install polkitd for Debian 13's run0 authentication,
+    install pkexec, or add yourself to the sudoers file.
   • Force a specific tool: ./start.sh --root=run0|pkexec|sudo
   • Inside the systemd unit only: ./start.sh --no-root
 EOF

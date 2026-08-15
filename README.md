@@ -55,6 +55,10 @@ You can keep launching manually. For an appliance-like boot, run:
 ./install.sh
 ```
 
+This repository has only one installer: the root-level `./install.sh` shown
+above. The obsolete original Nucore installer and its `exec_nucore.service`
+layout are no longer included.
+
 The installer presents one flat choice of cabinet host:
 
 | Choice | Session path | Role |
@@ -74,7 +78,7 @@ desktop-specific shells, panels or compositors. This is the generic price of
 reusing an arbitrary distribution-managed graphical session.
 
 Every standalone choice instead uses the same
-`agetty --autologin → login → PAM/logind` foundation and starts only its
+`agetty → login → PAM/logind` foundation and starts only its
 selected display backend. In both paths the selected account gets its normal
 `XDG_RUNTIME_DIR`, D-Bus, `systemd --user`, audio and distribution services. It
 does not need sudo or administrator membership.
@@ -216,6 +220,18 @@ target/getty state. On normal game exit they can start the installed display
 manager or leave a tty login for maintenance. Administrative service stops do
 not trigger that fallback.
 
+During cabinet startup, tty1 remains the session's controlling terminal, while
+`agetty --skip-login` avoids printing an automatic-login prompt. A narrow
+`nucore-session.sh --login` entry point redirects the ordinary login and
+display-backend streams to the journal before executing the normal login
+program. PAM's terminal conversation can bypass that redirection, so the
+installer also creates the standard empty `~/.hushlogin` when the selected user
+does not already have one. Its path and inode are recorded; uninstall removes
+only that unchanged project-created file. This suppresses the MOTD but does not
+replace or bypass PAM. If Nucore exits to console maintenance, the temporary
+maintenance getty restores visible terminal output for the normal password
+prompt.
+
 Paul's cabinet video is an excellent example of broader Linux appliance
 tuning: its boot is unusually fast and the handoff into Nucore is nearly
 seamless. This installer owns the Nucore launch path, not every firmware,
@@ -242,7 +258,12 @@ While the zero-second cabinet setting is installed, the drop-in disables the
 GRUB theme and graphical background as well: otherwise GRUB can flash the
 distro theme for a few milliseconds while initializing it, despite having no
 menu delay. Shift/Escape recovery remains available through GRUB's plain text
-menu. Removing the drop-in exposes the distribution theme again unchanged.
+menu. For a normal quiet boot, a project-owned GRUB generator also makes
+ordinary terminal text black-on-black, hiding Debian's unconditional “Loading
+Linux” and “Loading initial ramdisk” lines. Menu entries use separate colours,
+and the rule is disabled automatically after `recordfail`, so recovery and
+failed-boot diagnostics remain visible. Uninstall removes both project files
+and exposes the distribution presentation again unchanged.
 When uninstalling from a live desktop, an already active display manager keeps
 the visible VT; getty is re-enabled for future boots without stealing tty1.
 
@@ -1148,8 +1169,9 @@ not in sudoers" and refuses. nucore-portable handles this transparently:
 
 * **Dev / desktop launches (`./start.sh`)** auto-detect the escalation
   tool, in order: nothing-needed (caps already inherited from a parent
-  unit) → `run0` (systemd ≥256 / Debian 13: pops a proper polkit GUI
-  auth dialog, no sudoers required) → `pkexec` (older polkit) → `sudo`
+  unit) → `run0` (systemd ≥256 plus `polkitd`/`pkttyagent`: pops a proper
+  polkit authentication dialog, no sudoers required) → `pkexec` (older
+  polkit) → `sudo`
   (classic, requires sudoers).
 * **Display-server env preservation.** All three escalators are
   invoked with explicit forwarding of `$DISPLAY` / `$XAUTHORITY` /

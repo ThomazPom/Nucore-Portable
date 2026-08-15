@@ -24,6 +24,7 @@ fi
 echo "[+] stopping & disabling nucore.service"
 STATE_DIR=/var/lib/nucore-portable
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
+GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
 INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 systemctl stop nucore.service    2>/dev/null || true
@@ -47,10 +48,34 @@ rm -f /etc/nucore-portable/launch.args
 rmdir /etc/nucore-portable 2>/dev/null || true
 systemctl daemon-reload
 
+if [ -s "$STATE_DIR/hushlogin-created" ]; then
+    HUSHLOGIN=$(sed -n '1p' "$STATE_DIR/hushlogin-created")
+    HUSHLOGIN_ID=$(sed -n '2p' "$STATE_DIR/hushlogin-created")
+    case "$HUSHLOGIN" in
+        /*/.hushlogin)
+            if [ -f "$HUSHLOGIN" ] && [ ! -s "$HUSHLOGIN" ] &&
+               [ "$(stat -c '%d:%i' "$HUSHLOGIN" 2>/dev/null)" = "$HUSHLOGIN_ID" ]; then
+                rm -f -- "$HUSHLOGIN"
+            else
+                echo "    leaving changed hushlogin in place: $HUSHLOGIN" >&2
+            fi
+            ;;
+    esac
+fi
+
+GRUB_CHANGED=0
+if [ -f "$GRUB_QUIET_SCRIPT" ] &&
+   grep -q '^# nucore-portable managed silent GRUB handoff$' "$GRUB_QUIET_SCRIPT"; then
+    rm -f "$GRUB_QUIET_SCRIPT"
+    GRUB_CHANGED=1
+fi
 if [ -f "$GRUB_DROPIN" ] &&
    grep -q '^# nucore-portable managed boot presentation$' "$GRUB_DROPIN"; then
-    echo "[+] restoring GRUB boot presentation"
     rm -f "$GRUB_DROPIN"
+    GRUB_CHANGED=1
+fi
+if [ "$GRUB_CHANGED" -eq 1 ]; then
+    echo "[+] restoring GRUB boot presentation"
     if command -v update-grub >/dev/null 2>&1; then
         update-grub
     else
@@ -132,7 +157,8 @@ rm -f "$STATE_DIR/install-mode" \
       "$STATE_DIR/getty-tty1-was-enabled" \
       "$STATE_DIR/gdm-session-state" \
       "$STATE_DIR/gdm-xsession-state" \
-      "$STATE_DIR/install-user"
+      "$STATE_DIR/install-user" \
+      "$STATE_DIR/hushlogin-created"
 rmdir "$STATE_DIR" 2>/dev/null || true
 
 echo "=== uninstall complete ==="

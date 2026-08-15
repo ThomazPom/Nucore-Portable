@@ -192,6 +192,10 @@ elif [ "$BACKEND" != display-manager ]; then
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --noclear %I $TERM
+# The persistent cabinet getty journals its output for a clean boot. Restore
+# the visible terminal when the user explicitly enters maintenance instead.
+StandardOutput=tty
+StandardError=tty
 EOF
     systemctl daemon-reload
     systemctl --no-block restart getty@tty1.service 2>/dev/null || true

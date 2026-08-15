@@ -7,6 +7,17 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 CONF=/etc/nucore-portable/session.conf
 
+# agetty calls this mode before /bin/login. Redirect the complete automatic
+# login/PAM/backend stream before login attaches it directly to the cabinet VT.
+# /bin/login still owns authentication, PAM, logind and session creation.
+if [ "${1:-}" = --login ]; then
+    session_user=${2:-}
+    session_uid=$(id -u "$session_user" 2>/dev/null) || exit 3
+    [ "$session_uid" -ge 1000 ] || exit 3
+    exec > >(systemd-cat --identifier=nucore-session) 2>&1
+    exec /bin/login -f "$session_user" -s "$ROOT_DIR/bin/nucore-session.sh"
+fi
+
 client_main() {
     shift
     nested_host=0

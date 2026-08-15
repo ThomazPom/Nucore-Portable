@@ -8,6 +8,7 @@ CONF_DIR=/etc/nucore-portable
 CONF=$CONF_DIR/session.conf
 TTY=tty1
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
+GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
 
 ask() {
     local prompt=$1 default=$2 answer
@@ -33,14 +34,17 @@ EOF
 esac
 
 if [ "$EUID" -ne 0 ]; then
-    for tool in run0 sudo pkexec; do
+    for tool in run0 pkexec sudo; do
         command -v "$tool" >/dev/null 2>&1 || continue
+        [ "$tool" != run0 ] || command -v pkttyagent >/dev/null 2>&1 || continue
         case "$tool" in
             run0) exec run0 --description="nucore-portable installer" -- "$ROOT/install.sh" "$@" ;;
             *)    exec "$tool" "$ROOT/install.sh" "$@" ;;
         esac
     done
-    echo "install.sh: root privileges are required" >&2; exit 1
+    echo "install.sh: root privileges are required" >&2
+    echo "Install polkitd for run0, install pkexec, or run through sudo." >&2
+    exit 1
 fi
 
 case "$ROOT/" in
@@ -280,6 +284,23 @@ install -d -m 0755 "$STATE" "$CONF_DIR"
     systemctl is-enabled getty@tty1.service > "$STATE/getty-tty1-was-enabled" 2>/dev/null || true
 printf '%s\n' "$backend" > "$STATE/install-mode"
 
+# util-linux login and pam_motd deliberately write the distribution MOTD to
+# the controlling terminal, bypassing stdout/stderr redirection. A standard
+# hushlogin suppresses only that login chatter; it does not bypass PAM/logind
+# or hide a later maintenance password prompt. Own and track it conservatively.
+if [ "$backend" != display-manager ]; then
+    session_home=$(getent passwd "$session_user" | cut -d: -f6)
+    session_group=$(id -g "$session_user")
+    hushlogin="$session_home/.hushlogin"
+    if [ ! -e "$hushlogin" ]; then
+        install -m 0600 -o "$session_uid" -g "$session_group" /dev/null "$hushlogin"
+        {
+            printf '%s\n' "$hushlogin"
+            stat -c '%d:%i' "$hushlogin"
+        } > "$STATE/hushlogin-created"
+    fi
+fi
+
 cat > "$CONF" <<EOF
 # Managed by Nucore Portable
 BACKEND=$backend
@@ -331,6 +352,28 @@ EOF
         fi
     } > "$GRUB_DROPIN"
     chmod 0644 "$GRUB_DROPIN"
+
+    if [ "$quiet_boot" -eq 1 ]; then
+        if [ -e "$GRUB_QUIET_SCRIPT" ] &&
+           ! grep -q '^# nucore-portable managed silent GRUB handoff$' "$GRUB_QUIET_SCRIPT"; then
+            echo "install.sh: refusing unrelated existing $GRUB_QUIET_SCRIPT" >&2
+            exit 3
+        fi
+        cat > "$GRUB_QUIET_SCRIPT" <<'EOF'
+#!/bin/sh
+# nucore-portable managed silent GRUB handoff
+cat <<'GRUB_EOF'
+if [ "${recordfail}" != 1 ]; then
+  # GRUB's Debian generator always emits two kernel/initrd loading messages.
+  # Hide ordinary terminal text without hiding the separately coloured menu.
+  set color_normal=black/black
+fi
+GRUB_EOF
+EOF
+        chmod 0755 "$GRUB_QUIET_SCRIPT"
+    else
+        rm -f "$GRUB_QUIET_SCRIPT"
+    fi
     update-grub
 fi
 
@@ -347,7 +390,11 @@ else
     cat > /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf <<EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin $session_user --login-options '-f $session_user -s $ROOT/bin/nucore-session.sh' --noclear %I \$TERM
+ExecStart=-/sbin/agetty --skip-login --login-program "$ROOT/bin/nucore-session.sh" --login-options '--login $session_user' --noissue --noclear %I \$TERM
+# Keep tty1 as the controlling terminal, but do not paint the automatic-login,
+# PAM/MOTD or backend diagnostics over the Plymouth-to-game handoff.
+StandardOutput=journal
+StandardError=journal
 TTYVTDisallocate=no
 Restart=no
 EOF
