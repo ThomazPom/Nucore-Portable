@@ -9,7 +9,7 @@ CONF=$CONF_DIR/session.conf
 TTY=tty1
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
-GAMESCOPE_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-gamescope.sources
+BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
 
 ask() {
     local prompt=$1 default=$2 answer
@@ -238,7 +238,7 @@ cleanup_failed_install() {
     local rc=$?
     trap - EXIT
     if [ "$rc" -ne 0 ] && [ "$apt_source_created" -eq 1 ]; then
-        rm -f "$GAMESCOPE_APT_SOURCE"
+        rm -f "$BACKPORTS_APT_SOURCE"
     fi
     exit "$rc"
 }
@@ -261,47 +261,7 @@ fi
 missing=()
 case "$backend" in
     gamescope)
-        if ! command -v gamescope >/dev/null 2>&1 && [ ! -x /usr/games/gamescope ]; then
-            command -v apt-cache >/dev/null 2>&1 || {
-                echo "install.sh: Gamescope is absent and APT is unavailable" >&2; exit 3;
-            }
-            if ! apt-get -s install gamescope >/dev/null 2>&1; then
-                distro_id=""; distro_codename=""
-                if [ -r /etc/os-release ]; then
-                    distro_id=$(. /etc/os-release; printf '%s' "${ID:-}")
-                    distro_codename=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
-                fi
-                if [ "$distro_id" = debian ] && [ -n "$distro_codename" ]; then
-                    echo
-                    echo "Gamescope is not in Debian $distro_codename's base suite."
-                    echo "Debian publishes it in ${distro_codename}-backports (contrib)."
-                    ask "Enable that official Debian repository for Gamescope?" Y || exit 2
-                    if [ -e "$GAMESCOPE_APT_SOURCE" ] &&
-                       ! grep -q '^# nucore-portable managed Gamescope backports$' "$GAMESCOPE_APT_SOURCE"; then
-                        echo "install.sh: refusing unrelated $GAMESCOPE_APT_SOURCE" >&2; exit 3
-                    fi
-                    if [ ! -e "$GAMESCOPE_APT_SOURCE" ]; then
-                        cat > "$GAMESCOPE_APT_SOURCE" <<EOF
-# nucore-portable managed Gamescope backports
-Types: deb
-URIs: http://deb.debian.org/debian
-Suites: ${distro_codename}-backports
-Components: main contrib
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-EOF
-                        chmod 0644 "$GAMESCOPE_APT_SOURCE"
-                        apt_source_created=1
-                    fi
-                    DEBIAN_FRONTEND=noninteractive apt-get update
-                fi
-            fi
-            if ! apt-get -s install gamescope >/dev/null 2>&1; then
-                echo "install.sh: no Gamescope package candidate is available from configured repositories" >&2
-                echo "Install Gamescope through your distribution, then rerun this installer." >&2
-                exit 3
-            fi
-            missing+=(gamescope)
-        fi
+        command -v gamescope >/dev/null 2>&1 || [ -x /usr/games/gamescope ] || missing+=(gamescope)
         ;;
     cage)      command -v cage >/dev/null 2>&1 || missing+=(cage) ;;
     weston)    command -v weston >/dev/null 2>&1 || missing+=(weston) ;;
@@ -324,10 +284,79 @@ if [ "$sdl12_compat" -eq 0 ] || [ "$sdl_display" = xwayland ]; then
     esac
 fi
 if [ "${#missing[@]}" -gt 0 ]; then
-    echo "Missing distribution packages: ${missing[*]}"
-    ask "Install them with APT?" Y || exit 2
     command -v apt-get >/dev/null 2>&1 || { echo "APT unavailable" >&2; exit 3; }
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+
+    # Commands can imply the same package through more than one backend rule.
+    # Resolve every package independently so one missing candidate cannot hide
+    # which part of the selected stack is unavailable.
+    declare -A package_seen=()
+    packages=()
+    for package in "${missing[@]}"; do
+        [ -n "${package_seen[$package]:-}" ] && continue
+        package_seen[$package]=1
+        packages+=("$package")
+    done
+
+    unavailable=()
+    for package in "${packages[@]}"; do
+        apt-get -s install "$package" >/dev/null 2>&1 || unavailable+=("$package")
+    done
+
+    if [ "${#unavailable[@]}" -gt 0 ]; then
+        echo "Refreshing configured APT repositories before declaring packages unavailable..."
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        unavailable=()
+        for package in "${packages[@]}"; do
+            apt-get -s install "$package" >/dev/null 2>&1 || unavailable+=("$package")
+        done
+    fi
+
+    if [ "${#unavailable[@]}" -gt 0 ]; then
+        distro_id=""; distro_codename=""
+        if [ -r /etc/os-release ]; then
+            distro_id=$(. /etc/os-release; printf '%s' "${ID:-}")
+            distro_codename=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
+        fi
+        if [ "$distro_id" = debian ] && [ -n "$distro_codename" ]; then
+            echo
+            echo "No candidate in Debian $distro_codename's enabled suites: ${unavailable[*]}"
+            echo "They may be available from official ${distro_codename}-backports."
+            ask "Enable Debian backports (main + contrib) and check again?" Y || exit 2
+            if [ -e "$BACKPORTS_APT_SOURCE" ] &&
+               ! grep -q '^# nucore-portable managed Debian backports$' "$BACKPORTS_APT_SOURCE"; then
+                echo "install.sh: refusing unrelated $BACKPORTS_APT_SOURCE" >&2; exit 3
+            fi
+            if [ ! -e "$BACKPORTS_APT_SOURCE" ]; then
+                cat > "$BACKPORTS_APT_SOURCE" <<EOF
+# nucore-portable managed Debian backports
+Types: deb
+URIs: http://deb.debian.org/debian
+Suites: ${distro_codename}-backports
+Components: main contrib
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+                chmod 0644 "$BACKPORTS_APT_SOURCE"
+                apt_source_created=1
+            fi
+            DEBIAN_FRONTEND=noninteractive apt-get update
+        fi
+
+        unavailable=()
+        for package in "${packages[@]}"; do
+            apt-get -s install "$package" >/dev/null 2>&1 || unavailable+=("$package")
+        done
+    fi
+
+    if [ "${#unavailable[@]}" -gt 0 ]; then
+        echo "install.sh: no installable candidate for: ${unavailable[*]}" >&2
+        echo "Distribution: ${distro_id:-unknown} ${distro_codename:-unknown}" >&2
+        echo "Enable an appropriate distribution repository or install those packages, then retry." >&2
+        exit 3
+    fi
+
+    echo "Missing distribution packages: ${packages[*]}"
+    ask "Install them with APT?" Y || exit 2
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
 fi
 
 install -d -m 0755 "$STATE" "$CONF_DIR"

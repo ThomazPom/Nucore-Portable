@@ -25,7 +25,8 @@ echo "[+] stopping & disabling nucore.service"
 STATE_DIR=/var/lib/nucore-portable
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
-GAMESCOPE_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-gamescope.sources
+BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
+LEGACY_GAMESCOPE_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-gamescope.sources
 INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 systemctl stop nucore.service    2>/dev/null || true
@@ -49,11 +50,14 @@ rm -f /etc/nucore-portable/launch.args
 rmdir /etc/nucore-portable 2>/dev/null || true
 systemctl daemon-reload
 
-if [ -f "$GAMESCOPE_APT_SOURCE" ] &&
-   grep -q '^# nucore-portable managed Gamescope backports$' "$GAMESCOPE_APT_SOURCE"; then
-    echo "[+] removing project-added Gamescope backports source"
-    rm -f "$GAMESCOPE_APT_SOURCE"
-fi
+for project_source in "$BACKPORTS_APT_SOURCE" "$LEGACY_GAMESCOPE_APT_SOURCE"; do
+    [ -f "$project_source" ] || continue
+    if grep -q '^# nucore-portable managed Debian backports$' "$project_source" ||
+       grep -q '^# nucore-portable managed Gamescope backports$' "$project_source"; then
+        echo "[+] removing project-added Debian backports source"
+        rm -f "$project_source"
+    fi
+done
 
 if [ -s "$STATE_DIR/hushlogin-created" ]; then
     HUSHLOGIN=$(sed -n '1p' "$STATE_DIR/hushlogin-created")

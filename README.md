@@ -188,12 +188,14 @@ SDL2's fullscreen request without adding a desktop. Native SDL 1.2 manages its
 historical X11 fullscreen path itself. The auditable source is
 `src/nucore-wm.c`.
 
-The installer can offer to install only the selected backend's missing distro
-package: `gamescope`, `cage`, `weston`, or the minimal Xorg components. On
-Debian 13, Gamescope is supplied by the official `trixie-backports` `contrib`
-repository rather than the base suite; the installer can add a narrowly scoped,
-project-owned APT source after confirmation and removes it on uninstall. It never
-installs a desktop environment. It also asks for the game, watchdog, Pinbox,
+The installer resolves every package required by the selected backend through
+APT: `gamescope`, `cage`, `weston`, Xwayland, or the minimal Xorg components.
+It simulates each package installation first and reports the exact packages
+without candidates. On Debian stable it can check the official backports
+`main` and `contrib` components after confirmation; the narrowly scoped,
+project-owned source is removed on uninstall. Debian derivatives keep their
+own configured repositories—the installer never injects Debian archive URLs
+into another distribution. It never installs a desktop environment. It also asks for the game, watchdog, Pinbox,
 SDL implementation, ASIX experiment, fullscreen mode, colour depth, maintenance
 fallback, and optional quiet/zero-delay cabinet boot before showing a summary.
 It can also prepend a Nucore-Portable `--config` file; the guided selections
