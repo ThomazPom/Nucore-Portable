@@ -208,6 +208,7 @@ test_install() {
     # quiet boot, zero GRUB, proceed, and any backend package installation.
     case "$backend" in
         console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\n' ;;
+        gamescope) answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\ny\n' ;;
         *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\n' ;;
     esac
     install_as_cabinet "$backend" "$answers"

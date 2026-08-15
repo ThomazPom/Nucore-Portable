@@ -189,7 +189,10 @@ historical X11 fullscreen path itself. The auditable source is
 `src/nucore-wm.c`.
 
 The installer can offer to install only the selected backend's missing distro
-package: `gamescope`, `cage`, `weston`, or the minimal Xorg components. It never
+package: `gamescope`, `cage`, `weston`, or the minimal Xorg components. On
+Debian 13, Gamescope is supplied by the official `trixie-backports` `contrib`
+repository rather than the base suite; the installer can add a narrowly scoped,
+project-owned APT source after confirmation and removes it on uninstall. It never
 installs a desktop environment. It also asks for the game, watchdog, Pinbox,
 SDL implementation, ASIX experiment, fullscreen mode, colour depth, maintenance
 fallback, and optional quiet/zero-delay cabinet boot before showing a summary.
