@@ -358,39 +358,57 @@ if [ "${#missing[@]}" -gt 0 ]; then
         done
     fi
 
+    gamescope_from_backports=0
+    backports_suite=""
     if [ "${#unavailable[@]}" -gt 0 ]; then
         distro_id=""; distro_codename=""
         if [ -r /etc/os-release ]; then
             distro_id=$(. /etc/os-release; printf '%s' "${ID:-}")
             distro_codename=$(. /etc/os-release; printf '%s' "${VERSION_CODENAME:-}")
         fi
-        if [ "$distro_id" = debian ] && [ -n "$distro_codename" ]; then
+        gamescope_unavailable=0
+        for package in "${unavailable[@]}"; do
+            [ "$package" != gamescope ] || gamescope_unavailable=1
+        done
+        if [ "$gamescope_unavailable" -eq 1 ] && [ "$distro_id" = debian ] &&
+           [[ "$distro_codename" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            backports_suite="${distro_codename}-backports"
             echo
-            echo "No candidate in Debian $distro_codename's enabled suites: ${unavailable[*]}"
-            echo "They may be available from official ${distro_codename}-backports."
-            ask "Enable Debian backports (main + contrib) and check again?" Y || exit 2
+            echo "Gamescope has no candidate in Debian $distro_codename's enabled suites."
+            echo "The official $backports_suite suite is the Debian fallback for this backend."
+            ask "Enable official Debian $backports_suite for Gamescope?" Y || exit 2
             if [ -e "$BACKPORTS_APT_SOURCE" ] &&
                ! grep -q '^# nucore-portable managed Debian backports$' "$BACKPORTS_APT_SOURCE"; then
                 echo "install.sh: refusing unrelated $BACKPORTS_APT_SOURCE" >&2; exit 3
             fi
             if [ ! -e "$BACKPORTS_APT_SOURCE" ]; then
-                cat > "$BACKPORTS_APT_SOURCE" <<EOF
+                apt_source_created=1
+            fi
+            # A marked file may be left from an earlier Debian release. It is
+            # project-owned, so refresh it to the validated current codename;
+            # never edit or replace an administrator-owned source file.
+            cat > "$BACKPORTS_APT_SOURCE" <<EOF
 # nucore-portable managed Debian backports
 Types: deb
 URIs: http://deb.debian.org/debian
-Suites: ${distro_codename}-backports
+Suites: $backports_suite
 Components: main contrib
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
-                chmod 0644 "$BACKPORTS_APT_SOURCE"
-                apt_source_created=1
-            fi
+            chmod 0644 "$BACKPORTS_APT_SOURCE"
             DEBIAN_FRONTEND=noninteractive apt-get update
+            apt-get -s -t "$backports_suite" install gamescope >/dev/null 2>&1 &&
+                gamescope_from_backports=1
         fi
 
         unavailable=()
         for package in "${packages[@]}"; do
-            apt-get -s install "$package" >/dev/null 2>&1 || unavailable+=("$package")
+            if [ "$package" = gamescope ] && [ "$gamescope_from_backports" -eq 1 ]; then
+                apt-get -s -t "$backports_suite" install gamescope >/dev/null 2>&1 ||
+                    unavailable+=("$package")
+            else
+                apt-get -s install "$package" >/dev/null 2>&1 || unavailable+=("$package")
+            fi
         done
     fi
 
@@ -403,7 +421,20 @@ EOF
 
     echo "Missing distribution packages: ${packages[*]}"
     ask "Install them with APT?" Y || exit 2
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+    regular_packages=()
+    for package in "${packages[@]}"; do
+        if [ "$package" != gamescope ] || [ "$gamescope_from_backports" -eq 0 ]; then
+            regular_packages+=("$package")
+        fi
+    done
+    if [ "${#regular_packages[@]}" -gt 0 ]; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            "${regular_packages[@]}"
+    fi
+    if [ "$gamescope_from_backports" -eq 1 ]; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            -t "$backports_suite" gamescope
+    fi
 fi
 
 session_user=$owner_user

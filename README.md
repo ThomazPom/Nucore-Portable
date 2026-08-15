@@ -216,11 +216,13 @@ whether the distribution already provides PipeWire or PulseAudio. On a stripped
 netinst with neither, it offers Debian's `pipewire-audio` set rather than
 hard-coding individual service names into the launcher.
 It simulates each package installation first and reports the exact packages
-without candidates. On Debian stable it can check the official backports
-`main` and `contrib` components after confirmation; the narrowly scoped,
-project-owned source is removed on uninstall. Debian derivatives keep their
-own configured repositories—the installer never injects Debian archive URLs
-into another distribution. It never installs a desktop environment. It also asks for the game, watchdog, Pinbox,
+without candidates. Only a missing Gamescope package on Debian stable can
+offer the official codename-specific backports suite (`main` and `contrib`)
+after confirmation; other missing packages cannot trigger that fallback. The
+narrowly scoped, project-owned source is removed on uninstall. Debian
+derivatives keep their own configured repositories—the installer never injects
+Debian archive URLs into another distribution. It never installs a desktop
+environment. It also asks for the game, watchdog, Pinbox,
 SDL implementation, ASIX experiment, fullscreen mode, colour depth, maintenance
 fallback, and optional quiet/zero-delay cabinet boot before showing a summary.
 It can also prepend a Nucore-Portable `--config` file; the guided selections

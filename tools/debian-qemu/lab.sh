@@ -226,6 +226,12 @@ test_install() {
     esac
     install_as_cabinet "$backend" "$answers"
     ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && test \"\$(getent passwd nucore-cabinet | cut -d: -f7)\" = /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-wm && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
+    if [ "$backend" = gamescope ]; then
+        ssh_guest "grep -qx 'Suites: trixie-backports' /etc/apt/sources.list.d/nucore-portable-backports.sources && apt-cache policy gamescope | grep -q trixie-backports"
+    else
+        # Missing ordinary backend packages must never enable Backports.
+        ssh_guest 'test ! -e /etc/apt/sources.list.d/nucore-portable-backports.sources'
+    fi
     # Installation is not proven until a reboot has traversed login/PAM,
     # started the cabinet user's normal services and attached root Nucore.
     ssh_guest 'systemctl reboot' >/dev/null 2>&1 || true
