@@ -37,6 +37,8 @@ systemctl disable nucore.service 2>/dev/null || true
 # user exits or reboots.
 rm -f /etc/systemd/system/nucore.service
 rm -f /etc/polkit-1/rules.d/49-nucore.rules
+# Remove files from the short-lived global-login implementation too, so this
+# uninstaller can safely upgrade or remove that committed fallback state.
 rm -f /etc/profile.d/nucore-cabinet.sh
 rm -f /etc/xdg/autostart/nucore-cabinet.desktop
 rm -f /usr/share/xsessions/nucore.desktop

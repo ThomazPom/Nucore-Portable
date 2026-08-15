@@ -234,17 +234,11 @@ echo "  maintenance  : $maintenance"
 ask "Proceed?" Y || exit 0
 
 apt_source_created=0
-login_shell_changed=0
-original_login_shell=""
 cleanup_failed_install() {
     local rc=$?
     trap - EXIT
     if [ "$rc" -ne 0 ] && [ "$apt_source_created" -eq 1 ]; then
         rm -f "$BACKPORTS_APT_SOURCE"
-    fi
-    if [ "$rc" -ne 0 ] && [ "$login_shell_changed" -eq 1 ] &&
-       [ -n "$original_login_shell" ]; then
-        usermod -s "$original_login_shell" "$session_user" 2>/dev/null || true
     fi
     exit "$rc"
 }
@@ -388,66 +382,7 @@ install -d -m 0755 "$STATE" "$CONF_DIR"
     systemctl is-enabled getty@tty1.service > "$STATE/getty-tty1-was-enabled" 2>/dev/null || true
 printf '%s\n' "$backend" > "$STATE/install-mode"
 
-# /bin/login deliberately executes the shell recorded in passwd. Standalone
-# profiles temporarily select Debian's POSIX login shell; its system profile
-# hook enters the cabinet host after PAM/logind. Preserve the original value
-# exactly so uninstall can restore it. Display-manager profiles retain the
-# user's ordinary shell.
-if [ "$backend" != display-manager ]; then
-    original_login_shell=$(getent passwd "$session_user" | cut -d: -f7)
-    [ -n "$original_login_shell" ] || {
-        echo "install.sh: cannot determine login shell for $session_user" >&2
-        exit 3
-    }
-    printf '%s\n' "$original_login_shell" > "$STATE/original-login-shell"
-    printf '%s\n' "$session_user" > "$STATE/login-shell-user"
-    printf '%s\n' /bin/sh > "$STATE/installed-login-shell"
-    usermod -s /bin/sh "$session_user"
-    login_shell_changed=1
-fi
 apt_source_created=0
-
-# util-linux login and pam_motd deliberately write the distribution MOTD to
-# the controlling terminal, bypassing stdout/stderr redirection. A standard
-# hushlogin suppresses only that login chatter; it does not bypass PAM/logind
-# or hide a later maintenance password prompt. Own and track it conservatively.
-if [ "$backend" != display-manager ]; then
-    session_home=$(getent passwd "$session_user" | cut -d: -f6)
-    session_group=$(id -g "$session_user")
-    hushlogin="$session_home/.hushlogin"
-    if [ ! -e "$hushlogin" ]; then
-        install -m 0600 -o "$session_uid" -g "$session_group" /dev/null "$hushlogin"
-        {
-            printf '%s\n' "$hushlogin"
-            stat -c '%d:%i' "$hushlogin"
-        } > "$STATE/hushlogin-created"
-    fi
-fi
-
-# A POSIX login shell reliably reads /etc/profile on Debian-family systems.
-# Use a narrowly gated profile hook to enter the cabinet host on tty1 after
-# /bin/login has completed PAM/logind setup. The user's original shell remains
-# recorded for maintenance and uninstall.
-if [ "$backend" != display-manager ]; then
-    cat > /etc/profile.d/nucore-cabinet.sh <<EOF
-# nucore-portable managed cabinet login
-if [ "\${NUCORE_MAINTENANCE_LOGIN:-0}" = 1 ]; then
-    # The original login shell reads /etc/profile again. Consume this one-shot
-    # guard so that entering maintenance cannot recursively exec itself.
-    unset NUCORE_MAINTENANCE_LOGIN
-else
-    if [ "\$(id -un 2>/dev/null)" = "$session_user" ] &&
-       [ "\$(tty 2>/dev/null)" = /dev/tty1 ]; then
-        if [ -e /run/nucore-portable/maintenance-login ]; then
-            exec env NUCORE_MAINTENANCE_LOGIN=1 "$original_login_shell" -l
-        else
-            exec "$ROOT/bin/nucore-session.sh"
-        fi
-    fi
-fi
-EOF
-    chmod 0644 /etc/profile.d/nucore-cabinet.sh
-fi
 
 cat > "$CONF" <<EOF
 # Managed by Nucore Portable
@@ -534,22 +469,8 @@ if [ "$backend" = display-manager ]; then
     rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 else
     rm -f /etc/xdg/autostart/nucore-cabinet.desktop
-    install -d -m 0755 /etc/systemd/system/getty@tty1.service.d
-    getty_dropin_tmp=$(mktemp /etc/systemd/system/getty@tty1.service.d/.49-nucore-portable.conf.XXXXXX)
-    cat > "$getty_dropin_tmp" <<EOF
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin $session_user --noissue --noclear %I \$TERM
-# Keep tty1 as the controlling terminal, but do not paint the automatic-login,
-# PAM/MOTD or backend diagnostics over the Plymouth-to-game handoff.
-StandardOutput=journal
-StandardError=journal
-TTYVTDisallocate=no
-Restart=no
-EOF
-    test -s "$getty_dropin_tmp"
-    chmod 0644 "$getty_dropin_tmp"
-    mv -f "$getty_dropin_tmp" /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
+    rm -f /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
+    rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
 fi
 
 # Configure autologin without replacing the user's remembered desktop session.
@@ -594,16 +515,16 @@ if [ "$backend" = display-manager ]; then
     tty_directives="StandardInput=null"
     install_target=graphical.target
 elif [ "$backend" = console ]; then
-    unit_after="getty@tty1.service"
-    unit_wants="getty@tty1.service"
+    unit_after="user@${session_uid}.service"
+    unit_wants="user@${session_uid}.service"
     tty_directives="StandardInput=tty-force
 TTYPath=/dev/$TTY
 TTYReset=yes
 TTYVTDisallocate=no"
     install_target=multi-user.target
 else
-    unit_after="getty@tty1.service"
-    unit_wants="getty@tty1.service"
+    unit_after="user@${session_uid}.service"
+    unit_wants="user@${session_uid}.service"
     tty_directives="StandardInput=null"
     install_target=multi-user.target
 fi
@@ -614,7 +535,7 @@ cat > "$service_tmp" <<EOF
 Description=Pinball 2000 (Nucore Portable session architecture)
 Documentation=file:$ROOT/README.md
 After=systemd-user-sessions.service sound.target $unit_after
-Wants=$unit_wants
+${unit_wants:+Wants=$unit_wants}
 StartLimitIntervalSec=60
 StartLimitBurst=3
 
@@ -636,7 +557,7 @@ chmod 0644 "$service_tmp"
 mv -f "$service_tmp" /etc/systemd/system/nucore.service
 test -s /etc/systemd/system/nucore.service
 [ "$backend" = display-manager ] ||
-    test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
+    test ! -e /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf
 
 systemctl daemon-reload
 systemctl enable nucore.service
@@ -644,11 +565,11 @@ if [ "$backend" = display-manager ]; then
     systemctl set-default graphical.target
 else
     systemctl unmask getty@tty1.service
-    systemctl enable getty@tty1.service
+    systemctl disable getty@tty1.service 2>/dev/null || true
     systemctl set-default multi-user.target
 fi
 
 echo
-echo "Installed: real $session_user PAM/login session -> $backend -> root nucore.service"
+echo "Installed: root nucore.service -> $backend; $session_user supplies distro user services"
 echo "Next boot will use the new cabinet session architecture."
 echo "Logs: journalctl -u nucore -f"

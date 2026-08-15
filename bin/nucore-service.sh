@@ -1,6 +1,7 @@
 #!/bin/bash
-# Root-side service launcher. Attach to a real PAM/logind user session without
-# evaluating user-controlled shell syntax.
+# Root-side service launcher. Desktop mode attaches to the distribution's
+# login session; standalone mode owns its backend and only primes the selected
+# user's normal systemd services for audio and D-Bus.
 set -e
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -18,7 +19,7 @@ SDL12_COMPAT=$(sed -n 's/^SDL12_COMPAT=//p' "$CONF" | head -n1)
 SESSION_UID=$(id -u "$SESSION_USER")
 RUNTIME_DIR="/run/user/$SESSION_UID"
 ROOT_RUNTIME_DIR=/run/nucore-portable/runtime
-SESSION_DIR="$RUNTIME_DIR/nucore-portable"
+SESSION_DIR="$ROOT_RUNTIME_DIR/nucore-portable"
 ENV_FILE="$SESSION_DIR/display-environment"
 ARGS_FILE=/etc/nucore-portable/launch.args
 [ -r "$ARGS_FILE" ] || { echo "nucore-service: missing $ARGS_FILE" >&2; exit 3; }
@@ -27,11 +28,13 @@ mapfile -t LAUNCH_ARGS < "$ARGS_FILE"
 cleanup() {
     [ -z "${backend_pid:-}" ] || kill "$backend_pid" 2>/dev/null || true
     [ -z "${backend_pid:-}" ] || wait "$backend_pid" 2>/dev/null || true
+    [ -z "${session_host_pid:-}" ] || kill "$session_host_pid" 2>/dev/null || true
+    [ -z "${session_host_pid:-}" ] || wait "$session_host_pid" 2>/dev/null || true
     rm -f "$ROOT_RUNTIME_DIR/wayland-client" 2>/dev/null || true
     rmdir "$ROOT_RUNTIME_DIR" /run/nucore-portable 2>/dev/null || true
     [ "$BACKEND" != display-manager ] || return 0
     [ -d "$SESSION_DIR" ] || return 0
-    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = "$SESSION_UID" ] || return 0
+    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = 0 ] || return 0
     rm -f "$ENV_FILE" "$SESSION_DIR"/environment.* 2>/dev/null || true
     rmdir "$SESSION_DIR" 2>/dev/null || true
 }
@@ -41,11 +44,8 @@ start_maintenance() {
         systemctl stop getty@tty1.service 2>/dev/null || true
         systemctl --no-block start graphical.target display-manager.service 2>/dev/null || true
     else
-        # Replace cabinet autologin for the remainder of this boot with an
-        # ordinary password-backed prompt. This is also the safe fallback when
-        # a selected display backend cannot initialize.
-        install -d -m 0755 /run/nucore-portable
-        install -m 0644 /dev/null /run/nucore-portable/maintenance-login
+        # Open an ordinary password-backed prompt for maintenance. This is also
+        # the safe fallback when a selected display backend cannot initialize.
         install -d -m 0755 /run/systemd/system/getty@tty1.service.d
         cat > /run/systemd/system/getty@tty1.service.d/50-nucore-maintenance.conf <<'EOF'
 [Service]
@@ -62,6 +62,7 @@ administrative_stop() { cleanup; exit 0; }
 trap administrative_stop HUP INT TERM
 unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
 backend_pid=""
+session_host_pid=""
 
 if [ "$BACKEND" = display-manager ]; then
     # A normal desktop session imports its live display addresses into the
@@ -85,28 +86,35 @@ if [ "$BACKEND" = display-manager ]; then
         echo "nucore-service: desktop display environment timeout" >&2; exit 4;
     }
 else
+    # Start the distribution's ordinary enabled user services without logging
+    # the account into a shell or desktop. This keeps SSH, passwd and every
+    # recovery VT completely outside the cabinet launch mechanism.
+    systemctl start "user@${SESSION_UID}.service"
+    systemctl --user --machine="${SESSION_USER}@" start default.target
+    echo "nucore-service: default user services ready for $SESSION_USER" >&2
+    install -d -m 0700 -o root -g root "$ROOT_RUNTIME_DIR"
+    session_env=(XDG_RUNTIME_DIR="$ROOT_RUNTIME_DIR")
+    [ ! -S "$RUNTIME_DIR/bus" ] ||
+        session_env+=(DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus")
+    [ ! -S "$RUNTIME_DIR/pulse/native" ] ||
+        session_env+=(PULSE_SERVER="unix:$RUNTIME_DIR/pulse/native")
+    env "${session_env[@]}" "$ROOT_DIR/bin/nucore-session.sh" &
+    session_host_pid=$!
+
     i=0
-    getty_seen=0
     while [ "$i" -lt 1800 ] && [ ! -f "$ENV_FILE" ]; do
-        if systemctl is-active --quiet getty@tty1.service; then
-            getty_seen=1
-        elif [ "$getty_seen" -eq 1 ]; then
-            break
-        fi
+        kill -0 "$session_host_pid" 2>/dev/null || break
         i=$((i + 1)); sleep 0.1
     done
     [ -f "$ENV_FILE" ] || {
-        echo "nucore-service: cabinet login/display backend exited before becoming ready" >&2
+        echo "nucore-service: cabinet display backend exited before becoming ready" >&2
         start_maintenance
         exit 4
     }
-    [ "$(stat -c %u "$RUNTIME_DIR" 2>/dev/null)" = "$SESSION_UID" ] || {
-        echo "nucore-service: invalid user runtime directory" >&2; exit 4;
+    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = 0 ] || {
+        echo "nucore-service: refusing root backend directory with wrong owner" >&2; exit 4;
     }
-    [ "$(stat -c %u "$SESSION_DIR" 2>/dev/null)" = "$SESSION_UID" ] || {
-        echo "nucore-service: refusing session directory with wrong owner" >&2; exit 4;
-    }
-    [ "$(stat -c %u "$ENV_FILE")" = "$SESSION_UID" ] || {
+    [ "$(stat -c %u "$ENV_FILE")" = 0 ] || {
         echo "nucore-service: refusing environment with wrong owner" >&2; exit 4;
     }
 fi
@@ -137,6 +145,7 @@ if [ "$BACKEND" = xorg ]; then
 fi
 
 import_display_environment() {
+    if [ "$BACKEND" = display-manager ]; then endpoint_owner=$SESSION_UID; else endpoint_owner=0; fi
     while IFS='=' read -r name value; do
         case "$name" in
             DISPLAY)
@@ -149,7 +158,7 @@ import_display_environment() {
                 case "$value" in
                     /*)
                         if [ -f "$value" ] &&
-                           [ "$(stat -c %u "$value" 2>/dev/null)" = "$SESSION_UID" ]; then
+                           [ "$(stat -c %u "$value" 2>/dev/null)" = "$endpoint_owner" ]; then
                             export XAUTHORITY="$value"
                         fi
                         ;;
@@ -182,10 +191,14 @@ wayland_socket=""
 if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     case "$WAYLAND_DISPLAY" in
         /*) wayland_socket=$WAYLAND_DISPLAY ;;
-        *)  wayland_socket="$RUNTIME_DIR/$WAYLAND_DISPLAY" ;;
+        *)  if [ "$BACKEND" = display-manager ]; then
+                wayland_socket="$RUNTIME_DIR/$WAYLAND_DISPLAY"
+            else
+                wayland_socket="$ROOT_RUNTIME_DIR/$WAYLAND_DISPLAY"
+            fi ;;
     esac
     if [ -S "$wayland_socket" ] &&
-       [ "$(stat -c %u "$wayland_socket" 2>/dev/null)" = "$SESSION_UID" ]; then
+       [ "$(stat -c %u "$wayland_socket" 2>/dev/null)" = 0 ]; then
         :
     else
         wayland_socket=""
