@@ -13,6 +13,7 @@ BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
 CABINET_USER=nucore-cabinet
 CABINET_HOME=/var/lib/nucore-cabinet
 CABINET_SHELL=/usr/local/libexec/nucore-cabinet-login
+CABINET_WM=/usr/local/libexec/nucore-wm
 
 ask() {
     local prompt=$1 default=$2 answer
@@ -396,14 +397,12 @@ if [ "$backend" != display-manager ]; then
         exit 3
     fi
     install -d -m 0755 "$(dirname -- "$CABINET_SHELL")"
-    cabinet_shell_tmp=$(mktemp "$(dirname -- "$CABINET_SHELL")/.nucore-cabinet-login.XXXXXX")
-    {
-        echo '#!/bin/sh'
-        printf 'exec systemd-cat --identifier=nucore-cabinet-session -- %q\n' \
-            "$ROOT/bin/nucore-session.sh"
-    } > "$cabinet_shell_tmp"
-    chmod 0755 "$cabinet_shell_tmp"
-    mv -f "$cabinet_shell_tmp" "$CABINET_SHELL"
+    # The dedicated account must not need traversal access to the owner's
+    # home directory. Install only the small session host and Xorg helper in a
+    # system path; the privileged Nucore service continues to run the actual
+    # checkout in place.
+    install -m 0755 "$ROOT/bin/nucore-session.sh" "$CABINET_SHELL"
+    install -m 0755 "$ROOT/bin/nucore-wm" "$CABINET_WM"
     useradd --create-home --home-dir "$CABINET_HOME" --user-group \
         --shell "$CABINET_SHELL" "$CABINET_USER"
     passwd --lock "$CABINET_USER" >/dev/null

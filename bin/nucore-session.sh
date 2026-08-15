@@ -13,8 +13,9 @@ case ":$PATH:" in
 esac
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 CONF=/etc/nucore-portable/session.conf
+SELF="$SCRIPT_DIR/$(basename -- "$0")"
+WM_BINARY="$SCRIPT_DIR/nucore-wm"
 
 client_main() {
     shift
@@ -99,11 +100,11 @@ client_main() {
     # SDL2 fullscreen on bare Xorg needs the small EWMH helper.
     if [ "${1:-}" = --xorg ] &&
        grep -q '^SDL12_COMPAT=1$' "$CONF" 2>/dev/null; then
-        "$ROOT_DIR/bin/nucore-wm" &
+        "$WM_BINARY" &
         wm_pid=$!
         i=0
         while [ "$i" -lt 50 ]; do
-            "$ROOT_DIR/bin/nucore-wm" --ready 2>/dev/null && break
+            "$WM_BINARY" --ready 2>/dev/null && break
             kill -0 "$wm_pid" 2>/dev/null || {
                 echo "nucore-session: nucore-wm failed" >&2; exit 4;
             }
@@ -126,7 +127,6 @@ fi
 
 [ -r "$CONF" ] || { echo "nucore-session: missing $CONF" >&2; exit 3; }
 BACKEND=$(sed -n 's/^BACKEND=//p' "$CONF" | head -n1)
-SELF="$ROOT_DIR/bin/nucore-session.sh"
 DESKTOP_HOST=0
 if [ "${1:-}" = --desktop-host ]; then
     DESKTOP_HOST=1

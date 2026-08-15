@@ -68,7 +68,7 @@ if [ "$CABINET_USER" = nucore-cabinet ]; then
             exit 3
         }
     fi
-    rm -f /usr/local/libexec/nucore-cabinet-login
+    rm -f /usr/local/libexec/nucore-cabinet-login /usr/local/libexec/nucore-wm
     rmdir /usr/local/libexec 2>/dev/null || true
 fi
 

@@ -213,7 +213,7 @@ test_install() {
         *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\ny\n' ;;
     esac
     install_as_cabinet "$backend" "$answers"
-    ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && test \"\$(getent passwd nucore-cabinet | cut -d: -f7)\" = /usr/local/libexec/nucore-cabinet-login && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
+    ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && test \"\$(getent passwd nucore-cabinet | cut -d: -f7)\" = /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-wm && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
     # Installation is not proven until a reboot has traversed login/PAM,
     # started the cabinet user's normal services and attached root Nucore.
     ssh_guest 'systemctl reboot' >/dev/null 2>&1 || true
@@ -223,6 +223,12 @@ test_install() {
     # backend/session failure. The login journal and user manager prove this is
     # a real PAM/logind session rather than a synthesized runtime.
     ssh_guest "uid=\$(id -u nucore-cabinet); journalctl -b -u getty@tty1.service --no-pager | grep -q 'session opened for user nucore-cabinet'; for i in \$(seq 1 100); do systemctl is-active --quiet nucore.service && test -f /run/user/\$uid/nucore-portable/display-environment && break; sleep .1; done; systemctl is-active --quiet user@\$uid.service && { systemctl is-active --quiet nucore.service || test \"\$(systemctl show -p Result --value nucore.service)\" = success; } && { test -f /run/user/\$uid/nucore-portable/display-environment || ! systemctl is-active --quiet nucore.service; }"
+    ssh_guest "! journalctl -b -u getty@tty1.service -u nucore.service --no-pager | grep -qi 'permission denied'"
+    if [ "$backend" = xorg ]; then
+        # Prove the backend process actually ran. A cleanly exited ROM-less
+        # Nucore service alone is not sufficient evidence of a working login.
+        ssh_guest "test -s /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log && grep -q 'modeset(0)' /var/lib/nucore-cabinet/.local/share/xorg/Xorg.0.log"
+    fi
     ssh_guest "cd /opt/Nucore-Portable && ./uninstall.sh"
     ssh_guest "test ! -e /etc/systemd/system/nucore.service && test ! -e /etc/nucore-portable/session.conf && test ! -e /var/lib/nucore-portable/install-mode && ! getent passwd nucore-cabinet >/dev/null && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && systemctl is-active --quiet getty@tty1.service"
     stop_vm
