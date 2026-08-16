@@ -20,6 +20,7 @@ Useful commands:
 ./tools/debian-qemu/lab.sh prepare       # netinstall and seal the base image
 ./tools/debian-qemu/lab.sh test xorg     # fresh overlay; test ./install.sh --xorg
 ./tools/debian-qemu/lab.sh test console  # fresh overlay; test direct console
+./tools/debian-qemu/lab.sh test kmsdrm   # fresh overlay; test SDL2 direct DRM/KMS
 ./tools/debian-qemu/lab.sh manual        # fresh graphical VM, ready after netinst
 ./tools/debian-qemu/lab.sh shell         # SSH into the current overlay
 ./tools/debian-qemu/lab.sh stop

@@ -301,6 +301,7 @@ fi
 # select their only valid hosted backend explicitly.  Console and SDL2-compat
 # sessions retain their normal discovery/installer-selected behaviour.
 if [ "$SDL12_COMPAT" = 0 ] && [ "$BACKEND" != console ] &&
+   [ "$BACKEND" != kmsdrm ] &&
    [ -n "${DISPLAY:-}" ]; then
     export SDL_VIDEODRIVER=x11
 fi

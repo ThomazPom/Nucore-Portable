@@ -220,7 +220,7 @@ EXPECT_EOF
 
 test_install() {
     local backend=${1:-xorg} answers cabinet_uid maintenance_session
-    case "$backend" in xorg|console|gamescope|cage|weston) ;; *) die "unsupported stripped-guest backend: $backend" ;; esac
+    case "$backend" in xorg|console|kmsdrm|gamescope|cage|weston) ;; *) die "unsupported stripped-guest backend: $backend" ;; esac
     reset_overlay
     start_overlay
     assert_stripped_guest
@@ -231,6 +231,7 @@ test_install() {
     # quiet boot, zero GRUB, proceed, and any backend package installation.
     case "$backend" in
         console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\n' ;;
+        kmsdrm) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\n' ;;
         cage) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n32\ny\ny\ny\n' ;;
         gamescope) answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\n' ;;
         *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\n' ;;
@@ -267,6 +268,9 @@ test_install() {
         # GRUB passed it and that native SDL selected fbcon without stealing
         # tty1 from the PAM/login session.
         ssh_guest 'grep -qw video=640x480 /proc/cmdline; test "$(cat /sys/class/graphics/fb0/virtual_size)" = 640,480; ! systemctl cat nucore.service | grep -q tty-force; for i in $(seq 1 100); do pid=$(pgrep -f "/bin/nucore " | head -n1); if [ -n "$pid" ] && readlink /proc/$pid/fd/* 2>/dev/null | grep -qx /dev/fb0; then exit 0; fi; sleep .1; done; exit 1'
+    fi
+    if [ "$backend" = kmsdrm ]; then
+        ssh_guest "grep -qx SDL12_COMPAT=1 /etc/nucore-portable/session.conf && grep -qx SDL_DISPLAY=kmsdrm /etc/nucore-portable/session.conf && grep -qx -- --kmsdrm /etc/nucore-portable/launch.args && grep -qx -- --console /etc/nucore-portable/launch.args"
     fi
     # Reproduce uninstall from the post-game maintenance state. Keep a real
     # human tty1 login open: uninstall must remove only nucore-cabinet and must

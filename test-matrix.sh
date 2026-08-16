@@ -14,6 +14,7 @@ CASES=(
     xorg-sdl1
     xorg-sdl2
     console-sdl1
+    kmsdrm-sdl2
     display-manager-sdl1
     display-manager-sdl2-wayland
     display-manager-sdl2-xwayland
@@ -60,7 +61,7 @@ if [ -n "$ONLY" ]; then
 fi
 if [ "$DESKTOP" -eq 1 ]; then
     case "$ONLY" in
-        xorg-*|console-*)
+        xorg-*|console-*|kmsdrm-*)
             echo "test-matrix.sh: '$ONLY' requires the normal tty matrix" >&2
             exit 2
             ;;
@@ -177,7 +178,7 @@ fi
 write_service_dropin() {
     local backend=$1 template
     sudo install -d -m 0755 /run/systemd/system/nucore.service.d
-    if [ "$backend" = console ]; then
+    if [ "$backend" = console ] || [ "$backend" = kmsdrm ]; then
         template="$RUN_DIR/console.conf"
         printf '%s\n' '[Service]' 'Environment=NUCORE_TEST_NO_MAINTENANCE=1' \
             'StandardInput=tty-force' 'TTYPath=/dev/tty1' \
@@ -201,14 +202,18 @@ configure() {
         -e "s/^SDL12_COMPAT=.*/SDL12_COMPAT=$compat/" \
         -e "s/^SDL_DISPLAY=.*/SDL_DISPLAY=$display/" "$CONF"
     sudo sed -i -e '/^--console$/d' -e '/^--sdl12-compat$/d' \
-        -e '/^--wayland$/d' -e '/^--xwayland$/d' -e '/^--no-reboot$/d' "$ARGS"
+        -e '/^--wayland$/d' -e '/^--xwayland$/d' -e '/^--kmsdrm$/d' \
+        -e '/^--no-reboot$/d' "$ARGS"
     sudo sed -i '1a --no-reboot' "$ARGS"
     [ "$compat" != 1 ] || sudo sed -i '1a --sdl12-compat' "$ARGS"
     case "$display" in
         wayland) sudo sed -i '1a --wayland' "$ARGS" ;;
         xwayland) sudo sed -i '1a --xwayland' "$ARGS" ;;
+        kmsdrm) sudo sed -i '1a --kmsdrm' "$ARGS" ;;
     esac
-    [ "$backend" != console ] || sudo sed -i '1a --console' "$ARGS"
+    if [ "$backend" = console ] || [ "$backend" = kmsdrm ]; then
+        sudo sed -i '1a --console' "$ARGS"
+    fi
     write_service_dropin "$backend"
 }
 
@@ -335,6 +340,7 @@ else
     selected xorg-sdl1 && run_standalone xorg-sdl1 xorg 0 auto
     selected xorg-sdl2 && run_standalone xorg-sdl2 xorg 1 auto
     selected console-sdl1 && run_standalone console-sdl1 console 0 auto
+    selected kmsdrm-sdl2 && run_standalone kmsdrm-sdl2 kmsdrm 1 kmsdrm
 fi
 
 if selected display-manager-sdl1 ||

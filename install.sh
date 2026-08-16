@@ -32,7 +32,8 @@ Backends:
   --cage              standalone Cage kiosk session
   --weston            standalone Weston kiosk session
   --xorg              standalone minimal Xorg session
-  --console           framebuffer / direct-display session
+  --console           framebuffer session (native SDL 1.2 / fbcon)
+  --kmsdrm            direct DRM/KMS session (SDL12-compat / SDL2)
 EOF
         exit 0 ;;
 esac
@@ -79,6 +80,7 @@ case "${1:-}" in
     --weston) backend=weston ;;
     --xorg|--xorg-only) backend=xorg ;;
     --console) backend=console ;;
+    --kmsdrm) backend=kmsdrm ;;
     "") ;;
     *) echo "install.sh: unknown setup '$1'" >&2; exit 2 ;;
 esac
@@ -90,14 +92,16 @@ if [ -z "$backend" ]; then
         choices+=(display-manager)
         echo "1. Existing display manager — Recommended"
     fi
-    choices+=(gamescope cage weston xorg console)
+    choices+=(gamescope cage weston xorg console kmsdrm)
     number=0
     for choice in "${choices[@]}"; do
         number=$((number + 1))
         [ "$choice" = display-manager ] && continue
         case "$choice" in
             gamescope) label=Gamescope ;; cage) label=Cage ;; weston) label=Weston ;;
-            xorg) label=Xorg ;; console) label="Framebuffer / direct console" ;;
+            xorg) label=Xorg ;;
+            console) label="Framebuffer — native SDL 1.2 / fbcon" ;;
+            kmsdrm) label="KMSDRM — SDL12-compat / SDL2 direct DRM" ;;
         esac
         printf '%d. %s\n' "$number" "$label"
     done
@@ -175,7 +179,13 @@ if [ "$backend" = cage ]; then
     sdl12_compat=1
     sdl_display=wayland
 elif [ "$backend" = console ]; then
-    echo "Direct console uses native SDL 1.2/fbcon; SDL2/KMSDRM is not offered."
+    echo "Framebuffer uses the proven native SDL 1.2 fbcon path."
+elif [ "$backend" = kmsdrm ]; then
+    echo "KMSDRM is a direct-console SDL2 backend."
+    echo "It automatically enables SDL12-compat and the required 32-bit graphics runtime."
+    flags="$flags --sdl12-compat --kmsdrm"
+    sdl12_compat=1
+    sdl_display=kmsdrm
 elif ask "Use SDL12-compat?" N; then
     flags="$flags --sdl12-compat"
     sdl12_compat=1
@@ -196,7 +206,7 @@ elif ask "Use SDL12-compat?" N; then
 fi
 ask "Use experimental ASIX libraries?" N && flags="$flags --asix"
 if ask "Start fullscreen?" Y; then video=-fullscreen; else video=-window; fi
-if [ "$backend" = console ]; then default_bpp=16; else default_bpp=32; fi
+if [ "$backend" = console ] || [ "$backend" = kmsdrm ]; then default_bpp=16; else default_bpp=32; fi
 read -r -p "Colour depth [$default_bpp] (16/32): " bpp; bpp=${bpp:-$default_bpp}
 case "$bpp" in 16|32);; *) echo "Expected 16 or 32" >&2; exit 2;; esac
 service_args="${flags# } $game $video -bpp $bpp"
@@ -204,7 +214,9 @@ launch_args=()
 [ -n "$portable_config" ] && launch_args+=(--config "$portable_config")
 read -r -a guided_args <<< "$service_args"
 launch_args+=("${guided_args[@]}")
-[ "$backend" = console ] && launch_args=(--console "${launch_args[@]}")
+if [ "$backend" = console ] || [ "$backend" = kmsdrm ]; then
+    launch_args=(--console "${launch_args[@]}")
+fi
 
 maintenance=display-manager
 [ -n "$dm_service" ] || maintenance=getty
@@ -267,14 +279,15 @@ cleanup_failed_install() {
 }
 trap cleanup_failed_install EXIT
 
-if [ "$sdl12_compat" -eq 1 ] && [ "$sdl_display" = wayland ] &&
+if [ "$sdl12_compat" -eq 1 ] &&
+   { [ "$sdl_display" = wayland ] || [ "$sdl_display" = kmsdrm ]; } &&
    ! "$ROOT/bin/wayland-mesa.sh" check; then
     echo
-    echo "Native SDL2 Wayland needs the optional 32-bit Mesa rendering pack."
+    echo "SDL2 $sdl_display needs the optional 32-bit Mesa rendering pack."
     echo "It is excluded from the core repository because it expands to about 208 MiB."
     echo "The verified 49 MiB archive comes from this project's GitHub Releases."
-    ask "Download and install the optional Wayland Mesa pack now?" Y || {
-        echo "Choose Xwayland instead, or install it later with:" >&2
+    ask "Download and install the optional SDL2 graphics pack now?" Y || {
+        echo "Choose a hosted X11/Xwayland backend instead, or install it later with:" >&2
         echo "  $ROOT/bin/wayland-mesa.sh install" >&2
         exit 2
     }

@@ -2,7 +2,7 @@
 # start.sh — quick test launcher for nucore-portable.
 #
 # Usage: ./start.sh [--no-reboot] [--no-runner] [--pinbox] [--asix] [--sdl12-compat]
-#                   [--wayland|--xwayland] [--console]
+#                   [--wayland|--xwayland|--kmsdrm] [--console]
 #                   [--no-shim] [--no-audio-shim] [--no-sigio-shim]
 #                   [--config FILE]
 #                   [--] [game] [extra args...]
@@ -32,6 +32,8 @@
 #                 The proven native SDL 1.2 path remains the default.
 #   --wayland     with SDL12-compat, use SDL2's native Wayland backend.
 #   --xwayland    with SDL12-compat, use SDL2's X11 backend through Xwayland.
+#   --kmsdrm      with SDL12-compat, use SDL2's direct DRM/KMS backend.
+#                 Intended for a real console login with --console.
 #   --console     ADVANCED: allow SDL to use a direct-display backend.
 #                 Refuses active graphical sessions, but does not force fbcon:
 #                 native SDL may choose fbcon and SDL2 may choose KMSDRM.
@@ -161,6 +163,7 @@ while [ $# -gt 0 ]; do
         --sdl12-compat) SDL12_COMPAT=1; shift ;;
         --wayland)     SDL_DISPLAY=wayland; shift ;;
         --xwayland)    SDL_DISPLAY=xwayland; shift ;;
+        --kmsdrm)      SDL_DISPLAY=kmsdrm; shift ;;
         --console)     ALLOW_CONSOLE=1; shift ;;
         --no-shim)     USE_SHIM=0;    shift ;;
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
@@ -268,6 +271,7 @@ BUNDLE_OPTIONS=()
 [ "$NO_RUNNER" -eq 1 ] && BUNDLE_OPTIONS+=(--no-runner)
 [ "$SDL_DISPLAY" = wayland ] && BUNDLE_OPTIONS+=(--wayland)
 [ "$SDL_DISPLAY" = xwayland ] && BUNDLE_OPTIONS+=(--xwayland)
+[ "$SDL_DISPLAY" = kmsdrm ] && BUNDLE_OPTIONS+=(--kmsdrm)
 [ "$ALLOW_CONSOLE" -eq 1 ] && BUNDLE_OPTIONS+=(--console)
 [ "$USE_SHIM" -eq 0 ] && BUNDLE_OPTIONS+=(--no-shim)
 [ "$SHIM_AUDIO" = 0 ] && BUNDLE_OPTIONS+=(--no-audio-shim)

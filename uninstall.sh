@@ -153,7 +153,7 @@ if [ "$GRUB_CHANGED" -eq 1 ]; then
 fi
 
 if [ "$INSTALL_MODE" = xorg-only ] || [ "$INSTALL_MODE" = xorg ] ||
-   [ "$INSTALL_MODE" = console ] || [ "$INSTALL_MODE" = cage ] ||
+   [ "$INSTALL_MODE" = console ] || [ "$INSTALL_MODE" = kmsdrm ] || [ "$INSTALL_MODE" = cage ] ||
    [ "$INSTALL_MODE" = weston ] || [ "$INSTALL_MODE" = gamescope ]; then
     echo "[+] restoring boot target and tty1 getty"
     # Also repairs installations made by the older console experiment, which

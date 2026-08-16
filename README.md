@@ -73,7 +73,8 @@ The installer presents one flat choice of cabinet host:
 | **Cage** | cabinet login → Wayland kiosk | Minimal single application |
 | **Weston** | cabinet login → Weston kiosk shell | Reference Wayland stack |
 | **Xorg** | cabinet login → bare Xorg | Proven SDL 1.2/X11 path |
-| **Framebuffer / direct console** | cabinet login → SDL direct display | Lowest-level experimental path |
+| **Framebuffer** | cabinet login → native SDL 1.2 fbcon | Proven compositor-free path |
+| **KMSDRM** | cabinet login → SDL12-compat/SDL2 direct DRM | Experimental modern direct-display path |
 
 The display-manager choice is shown only when a supported manager exists. It
 enables autologin into the user's already selected desktop session. GNOME,
@@ -130,14 +131,16 @@ One necessary exception is native SDL 1.2 in a graphical cabinet session: the
 service selects X11 because SDL 1.2 has no Wayland backend and its root process
 can otherwise prefer `fbcon`, bypassing Xorg/Xwayland and the compositor.
 Xorg publishes `DISPLAY`; Cage, Weston and Gamescope publish their client
-display; direct console publishes neither. Native SDL 1.2 and SDL12-compat/SDL2 then select a
-backend that is actually present in their build and environment. `--console`
-only unlocks the direct-display safety gate. The installer uses native SDL 1.2
-for this profile and lets it discover fbcon. SDL2/KMSDRM remains a manual research path: on the
-tested Intel/Kali host it crashed while changing display mode and left the VT
-in graphics mode, so it is not offered as a cabinet configuration.
+display; the two direct-console profiles publish neither. Native SDL 1.2 and
+SDL12-compat/SDL2 then select a backend present in their build and environment.
+`--console` only unlocks the direct-display safety gate. The Framebuffer choice
+uses native SDL 1.2 and lets it discover fbcon. The adjacent KMSDRM choice
+automatically selects SDL12-compat, SDL2's KMSDRM driver and the optional 32-bit
+Mesa runtime. It remains experimental because direct mode-setting is more
+hardware- and driver-dependent than the proven fbcon and hosted paths.
 
-For direct console, the installer can make a best-effort `640×480` request
+For the native SDL 1.2 Framebuffer profile, the installer can make a
+best-effort `640×480` request
 through GRUB and the kernel `video=` parameter. GRUB retains an automatic
 fallback, and firmware, DRM/KMS, the GPU driver or a fixed-mode panel may
 reject the request and keep another mode. The login session continues to own
@@ -152,12 +155,16 @@ fits it to the physical output while preserving aspect ratio, and forces the
 client to fill that virtual surface. Weston enables its kiosk shell and
 XWayland compatibility.
 
+KMSDRM has no compositor. SDL2 acquires DRM master and performs its own
+fullscreen mode-setting and presentation.
+
 When SDL12-compat is selected with Gamescope, Weston, or an existing display
 manager, the installer asks whether Nucore should use native Wayland or
 Xwayland. Native Wayland publishes only `WAYLAND_DISPLAY` and selects SDL2's
 Wayland driver. Xwayland retains `DISPLAY` and selects SDL2's X11 driver. Native SDL 1.2 keeps
 its established Xwayland path. Xorg and direct-console installations do not
-offer an inapplicable Wayland/Xwayland choice. Cage is a pure Wayland kiosk in
+offer an inapplicable Wayland/Xwayland choice. KMSDRM instead selects its SDL2
+driver automatically as part of that top-level backend. Cage is a pure Wayland kiosk in
 this architecture, so its only supported path—SDL12-compat with native
 Wayland—is selected automatically.
 
@@ -170,20 +177,20 @@ its native Wayland backend normally. Native SDL 1.2 ignores that variable and
 can use Xwayland when available. Gamescope diagnostics go to the journal rather
 than tty1.
 
-SDL12-compat still has to turn Nucore's SDL 1.2 software surface into a Wayland
+SDL12-compat still has to turn Nucore's SDL 1.2 software surface into a GPU
 buffer. SDL2 has no usable Wayland software-window framebuffer for this path,
-so native Wayland needs the optional 32-bit EGL/GLES2 and Mesa DRI pack for
-that upload. `SDL_RENDER_DRIVER=opengles2` avoids SDL2 first selecting its
+so native Wayland and KMSDRM need the optional 32-bit EGL/GLES2 and Mesa DRI
+pack for that upload. `SDL_RENDER_DRIVER=opengles2` avoids SDL2 first selecting its
 GLX-oriented OpenGL renderer; Gamescope continues to perform final scaling and
 composition on the host GPU. Mesa selects its DRI driver automatically from
 `bundlex86/optional/wayland-mesa-i386/dri/`. The driver names there are
 symlinks to one shared Mesa binary, not duplicate copies.
 
 The core clone intentionally excludes that approximately 208 MiB extracted
-runtime because native SDL2 Wayland is experimental and Xorg/Xwayland do not
-need it. The installer explains the trade-off and offers the verified 49 MiB
-archive from this project's GitHub Releases only when native Wayland is
-selected. It can also be managed directly:
+runtime because native SDL2 Wayland and KMSDRM are experimental while
+Xorg/Xwayland do not need it. The installer explains the trade-off and offers
+the verified 49 MiB archive from this project's GitHub Releases only when one
+of those hardware-backed SDL2 paths is selected. It can also be managed directly:
 
 ```sh
 ./bin/wayland-mesa.sh install
@@ -237,6 +244,7 @@ The backend can be preselected while retaining the remaining questions:
 ./install.sh --weston
 ./install.sh --xorg
 ./install.sh --console
+./install.sh --kmsdrm
 ```
 
 Do not install from `/tmp`: the service points to the checkout in place and a
@@ -433,6 +441,9 @@ Examples:
 ./start.sh --no-reboot --sdl12-compat --wayland swe1_14
 ./start.sh --no-reboot --sdl12-compat --xwayland swe1_14
 
+# Direct SDL2 DRM/KMS test (run outside every graphical session)
+./start.sh --no-reboot --console --sdl12-compat --kmsdrm swe1_14
+
 # Production cabinet runners: intentionally omit --no-reboot
 ./start.sh swe1_14 -fullscreen -bpp 16
 ./start.sh --pinbox rfm_15 -fullscreen -bpp 16
@@ -458,6 +469,7 @@ Examples:
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
 | `--wayland` | auto | With SDL12-compat, require SDL2 native Wayland and apply its bundled GLES2 compatibility defaults |
 | `--xwayland` | auto | With SDL12-compat, require SDL2's X11 driver through the available Xwayland server |
+| `--kmsdrm` | auto | With SDL12-compat and `--console`, require SDL2's direct DRM/KMS driver |
 | `--console` | off | **Advanced:** permit SDL direct display after refusing active graphical sessions; native SDL may choose fbcon and SDL2 may choose KMSDRM |
 | `--no-shim` | off | **Experimental:** do not preload `sigio_fix.so` |
 | `--no-audio-shim` | off | Keep RTC/SIGIO protection but disable the shim's mixer-buffer and realtime-scheduling changes |
@@ -1014,8 +1026,8 @@ The point of this repo is the **bundle around `nucore`**, not nucore itself:
 * `start.sh` for quick testing in any graphical session
 * `test-matrix.sh` for guided TTY or nested-desktop backend validation
 * `install.sh` for production: a reversible session-oriented systemd
-  integration with display-manager, Gamescope, Cage, Weston, Xorg and direct
-  console choices. It never installs a desktop environment.
+  integration with display-manager, Gamescope, Cage, Weston, Xorg,
+  framebuffer and KMSDRM choices. It never installs a desktop environment.
 
 `nucore` itself is the upstream Big Guy's Pinball 2.25.3R build extracted from
 the official Lubuntu deb in FlipperFiles. Its emulator internals are unchanged;
@@ -1055,7 +1067,7 @@ bundlex86/            i386 shared libraries the bundle ships
   asix/               complete ASIX libftchipid 0.1.0 / libstdc++.so.6 overlay
   sdl12-compat/       opt-in SDL 1.2 ABI → SDL 2 translation overlay
   optional/           downloaded add-ons, absent from the core clone
-    wayland-mesa-i386/  native-Wayland EGL/GLES2 + Mesa DRI runtime
+    wayland-mesa-i386/  native-Wayland/KMSDRM EGL/GLES2 + Mesa DRI runtime
 roms/                 ROMs + savedata (.nvram, .flash, .ems, .see)
 update/               per-game update trees; both may coexist
   swe1_14/            SWE1 update tree (latest official Williams: 0150)
@@ -1266,7 +1278,7 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
   checksum and full redistribution notices are included beside the binary
 * optional `bundlex86/optional/wayland-mesa-i386/` — the verified
   `wayland-mesa-i386-v2` GitHub Release asset, downloaded only for native
-  SDL2 Wayland; it includes SDL2 2.32.4 plus the EGL/GLES2/Mesa renderer, and
+  SDL2 Wayland or KMSDRM; it includes SDL2 2.32.4 plus the EGL/GLES2/Mesa renderer, and
   its DRI driver aliases share one Mesa binary
 * `bundlex86/asix/libftchipid.so.0` — official ASIX i386 `libftchipid` 0.1.0;
   source URL, naming details and SHA-256 checksums are recorded in the adjacent

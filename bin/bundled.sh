@@ -4,7 +4,7 @@
 # Wraps the target binary in a self-contained i386 runtime (../bundlex86)
 # so the host needs no `dpkg --add-architecture i386` or system 32-bit libs.
 #
-# Usage: bundled.sh [--console] [--no-runner] [--wayland|--xwayland] [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
+# Usage: bundled.sh [--console] [--no-runner] [--wayland|--xwayland|--kmsdrm] [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
 #   portable          — native SDL 1.2 + sigio_fix (default)
 #   asix              — experimental ASIX libftchipid 0.1.0 overlay
 #   sdl12-compat      — experimental SDL 1.2 ABI on bundled SDL 2
@@ -31,12 +31,13 @@ set_library_path() {
     esac
     case "$1" in
         sdl12-compat|sdl12-compat-asix)
-            if [ "${SDL_VIDEODRIVER:-}" = wayland ] &&
+            if { [ "${SDL_VIDEODRIVER:-}" = wayland ] ||
+                 [ "${SDL_VIDEODRIVER:-}" = KMSDRM ]; } &&
                [ "${SDL_RENDER_DRIVER:-}" != software ]; then
                 if ! "$SCRIPT_DIR/wayland-mesa.sh" check; then
-                    echo "bundled.sh: native SDL2 Wayland needs the optional Mesa i386 pack." >&2
+                    echo "bundled.sh: SDL2 ${SDL_VIDEODRIVER} needs the optional Mesa i386 pack." >&2
                     echo "Install it with: $SCRIPT_DIR/wayland-mesa.sh install" >&2
-                    echo "Or use --xwayland, which does not need this pack." >&2
+                    echo "Or use a hosted X11/Xwayland path, which does not need this pack." >&2
                     exit 6
                 fi
                 LIBPATH="$WAYLAND_MESA/indirect:$LIBPATH"
@@ -97,6 +98,7 @@ while :; do
         --no-runner)     NO_RUNNER=1; shift ;;
         --wayland)       SDL_DISPLAY=wayland; shift ;;
         --xwayland)      SDL_DISPLAY=xwayland; shift ;;
+        --kmsdrm)        SDL_DISPLAY=kmsdrm; shift ;;
         --no-shim)       USE_SHIM=0; shift ;;
         --no-audio-shim) SHIM_AUDIO=0; shift ;;
         --no-sigio-shim) SHIM_SIGIO=0; shift ;;
@@ -161,6 +163,14 @@ case "$SDL_DISPLAY" in
         }
         export SDL_VIDEODRIVER=x11
         ;;
+    kmsdrm)
+        [ "$ALLOW_CONSOLE" -eq 1 ] || {
+            echo "bundled.sh: --kmsdrm requires the gated --console mode" >&2; exit 6;
+        }
+        unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
+        export SDL_VIDEODRIVER=KMSDRM
+        export SDL_RENDER_DRIVER="${SDL_RENDER_DRIVER:-opengles2}"
+        ;;
 esac
 
 RUNNER="$1"; [ "$#" -gt 0 ] && shift
@@ -168,7 +178,7 @@ BINARY="$1"; [ "$#" -gt 0 ] && shift
 
 if [ -z "$RUNNER" ] || [ -z "$BINARY" ]; then
     cat >&2 <<EOF
-Usage: $0 [--console] [--no-runner] [--wayland|--xwayland] [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
+Usage: $0 [--console] [--no-runner] [--wayland|--xwayland|--kmsdrm] [--no-shim] [--no-audio-shim] [--no-sigio-shim] [mode] <runner> <binary> [args...]
   portable          — native SDL 1.2 + sigio_fix (default)
   asix              — experimental ASIX libftchipid 0.1.0 overlay
   sdl12-compat      — experimental SDL 1.2 ABI on SDL 2

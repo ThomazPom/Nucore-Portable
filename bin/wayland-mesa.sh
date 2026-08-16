@@ -1,6 +1,6 @@
 #!/bin/bash
-# Install/check/remove the optional i386 Mesa runtime used only by
-# SDL12-compat's native Wayland renderer.
+# Install/check/remove the optional i386 Mesa runtime used by SDL12-compat's
+# hardware-backed native Wayland and KMSDRM renderers.
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -38,7 +38,7 @@ download() {
 install_pack() {
     local work archive extract candidate backup=""
     if valid_pack; then
-        echo "Optional Wayland Mesa i386 pack v$VERSION is already installed."
+        echo "Optional SDL2 graphics/Mesa i386 pack v$VERSION is already installed."
         return 0
     fi
     command -v sha256sum >/dev/null 2>&1 || {
@@ -52,7 +52,7 @@ install_pack() {
     archive="$work/$ASSET"
     extract="$work/extract"
     mkdir -p "$extract"
-    echo "Downloading optional Wayland Mesa i386 pack v$VERSION (about 49 MiB)..."
+    echo "Downloading optional SDL2 graphics/Mesa i386 pack v$VERSION (about 49 MiB)..."
     download "$archive"
     printf '%s  %s\n' "$SHA256" "$archive" | sha256sum --check --status || {
         echo "wayland-mesa.sh: downloaded archive failed SHA-256 verification" >&2
@@ -83,7 +83,7 @@ install_pack() {
     fi
     trap - EXIT HUP INT TERM
     rm -rf -- "$work"
-    echo "Installed optional Wayland Mesa i386 pack v$VERSION."
+    echo "Installed optional SDL2 graphics/Mesa i386 pack v$VERSION."
 }
 
 case "${1:-status}" in
@@ -91,9 +91,9 @@ case "${1:-status}" in
     check) valid_pack || exit 1 ;;
     status)
         if valid_pack; then
-            echo "installed: Wayland Mesa i386 pack v$VERSION"
+            echo "installed: SDL2 graphics/Mesa i386 pack v$VERSION"
         else
-            echo "not installed: Wayland Mesa i386 pack v$VERSION"
+            echo "not installed: SDL2 graphics/Mesa i386 pack v$VERSION"
             exit 1
         fi
         ;;
@@ -101,7 +101,7 @@ case "${1:-status}" in
         case "$PACK_DIR" in "$ROOT"/bundlex86/optional/wayland-mesa-i386) ;; *) exit 4 ;; esac
         rm -rf -- "$PACK_DIR"
         rmdir "$PACK_PARENT" 2>/dev/null || true
-        echo "Removed optional Wayland Mesa i386 pack."
+        echo "Removed optional SDL2 graphics/Mesa i386 pack."
         ;;
     *) echo "Usage: $0 [install|check|status|remove]" >&2; exit 2 ;;
 esac

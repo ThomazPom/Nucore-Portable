@@ -175,7 +175,7 @@ case "$BACKEND" in
         [ "$DESKTOP_HOST" -eq 0 ] || weston_args+=(--backend=wayland)
         exec weston "${weston_args[@]}" -- "$SELF" "${client_args[@]}"
         ;;
-    console)
+    console|kmsdrm)
         exec "$SELF" "${client_args[@]}"
         ;;
     *)
