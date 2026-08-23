@@ -17,7 +17,8 @@
 #                 use this for development / patching outside a real cabinet.
 #   --no-runner   launch the emulator binary directly through the bundle.
 #                 Implies --no-reboot so a failure exits instead of rebooting
-#                 the host. Useful for separating emulator and runner behaviour.
+#                 the host. This is the cabinet installer's safe default; the
+#                 no-watchdog emulator remains capable of normal standalone use.
 #   --pinbox      target the pinbox fork instead of nucore.
 #                 Combined matrix:
 #                     (default)               run        + nucore

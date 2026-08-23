@@ -136,8 +136,12 @@ SDL12-compat/SDL2 then select a backend present in their build and environment.
 `--console` only unlocks the direct-display safety gate. The Framebuffer choice
 uses native SDL 1.2 and lets it discover fbcon. The adjacent KMSDRM choice
 automatically selects SDL12-compat, SDL2's KMSDRM driver and the optional 32-bit
-Mesa runtime. It remains experimental because direct mode-setting is more
-hardware- and driver-dependent than the proven fbcon and hosted paths.
+Mesa runtime. KMSDRM is a first-class cabinet backend: it keeps the normal
+PAM/logind user session for audio and runtime services, but needs no display
+manager, desktop, X server or Wayland compositor. SDL2 acquires DRM/KMS
+directly and presents Nucore fullscreen. Direct mode-setting remains more
+hardware- and driver-dependent than a hosted graphical session, so the
+display-manager profile is still the compatibility-first recommendation.
 
 For the native SDL 1.2 Framebuffer profile, the installer can make a
 best-effort `640×480` request
@@ -156,7 +160,14 @@ client to fill that virtual surface. Weston enables its kiosk shell and
 XWayland compatibility.
 
 KMSDRM has no compositor. SDL2 acquires DRM master and performs its own
-fullscreen mode-setting and presentation.
+fullscreen mode-setting and presentation. The installer defaults this path to
+`-bpp 32`, while native SDL 1.2 framebuffer/fbcon keeps `-bpp 16`. Nucore's
+manual predates KMSDRM: its “console = 16” advice describes classic fbcon, and
+its “X11 = 32” advice avoids a mismatched display format. With sdl12-compat,
+16 bpp is an RGB565 application surface, but SDL2's accelerated renderer
+accepts 32-bit streaming textures; sdl12-compat must therefore convert the
+whole 640×480 surface during upload. At 32 bpp, Nucore's XRGB8888 surface can
+follow the modern SDL2 presentation path without that 16→32 conversion.
 
 When SDL12-compat is selected with Gamescope, Weston, or an existing display
 manager, the installer asks whether Nucore should use native Wayland or
@@ -181,15 +192,16 @@ SDL12-compat still has to turn Nucore's SDL 1.2 software surface into a GPU
 buffer. SDL2 has no usable Wayland software-window framebuffer for this path,
 so native Wayland and KMSDRM need the optional 32-bit EGL/GLES2 and Mesa DRI
 pack for that upload. `SDL_RENDER_DRIVER=opengles2` avoids SDL2 first selecting its
-GLX-oriented OpenGL renderer; Gamescope continues to perform final scaling and
-composition on the host GPU. Mesa selects its DRI driver automatically from
+GLX-oriented OpenGL renderer on native Wayland; KMSDRM leaves renderer selection
+to SDL2. Gamescope continues to perform final scaling and composition on the
+host GPU. Mesa selects its DRI driver automatically from
 `bundlex86/optional/wayland-mesa-i386/dri/`. The driver names there are
 symlinks to one shared Mesa binary, not duplicate copies.
 
-The core clone intentionally excludes that approximately 208 MiB extracted
-runtime because native SDL2 Wayland and KMSDRM are experimental while
-Xorg/Xwayland do not need it. The installer explains the trade-off and offers
-the verified 49 MiB archive from this project's GitHub Releases only when one
+The core clone intentionally excludes that approximately 211 MiB extracted
+runtime because Xorg/Xwayland and native SDL 1.2 do not need it. The installer
+explains the trade-off and offers the verified 50 MiB archive from this
+project's GitHub Releases only when one
 of those hardware-backed SDL2 paths is selected. It can also be managed directly:
 
 ```sh
@@ -229,7 +241,7 @@ after confirmation; other missing packages cannot trigger that fallback. The
 narrowly scoped, project-owned source is removed on uninstall. Debian
 derivatives keep their own configured repositories—the installer never injects
 Debian archive URLs into another distribution. It never installs a desktop
-environment. It also asks for the game, watchdog, Pinbox,
+environment. It also asks for the game, legacy runner, Pinbox,
 SDL implementation, ASIX experiment, fullscreen mode, colour depth, maintenance
 fallback, and optional quiet/zero-delay cabinet boot before showing a summary.
 It can also prepend a Nucore-Portable `--config` file; the guided selections
@@ -463,7 +475,7 @@ Examples:
 | Option | Default | Effect |
 |---|---|---|
 | `--no-reboot` | off | Select the safe testing runner and no-watchdog emulator binary |
-| `--no-runner` | off | Launch the no-watchdog emulator binary directly, without runner setup or crash handling; diagnostic only |
+| `--no-runner` | off | Launch the no-watchdog emulator binary directly, without legacy runner setup or host-reboot handling; this is the cabinet installer's default |
 | `--pinbox` | off | Run the Pinbox fork instead of Nucore |
 | `--asix` | off | **Experimental:** select the newer ASIX `libftchipid` path that uses `libstdc++.so.6` instead of the original `.so.5` |
 | `--sdl12-compat` | off | **Experimental:** translate SDL 1.2 calls to bundled SDL 2 |
@@ -731,6 +743,8 @@ as historical binaries and are not selected by `start.sh`.
 | `--no-reboot` | `runrd` | `nucore_nwd` | Safe Nucore desktop testing |
 | `--pinbox` | `run` | `pinbox` | Production Pinbox watchdog |
 | `--pinbox --no-reboot` | `run_pb_rd` | `pinbox_nwd` | Safe Pinbox desktop testing |
+| `--no-runner` | *(none)* | `nucore_nwd` | Direct no-watchdog launch; cabinet installer default |
+| `--pinbox --no-runner` | *(none)* | `pinbox_nwd` | Direct no-watchdog Pinbox launch |
 
 The SDL implementation and the two shim halves are independent:
 
@@ -1180,10 +1194,12 @@ for why `--preload` and not `LD_PRELOAD=`).
 config, prepends those saved words to the explicit command line, then parses
 its runner, SDL, shim, privilege and inhibitor options. It
 picks a `(runner, binary)` pair and calls
-`bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. Nucore reads
+`bin/bundled.sh <mode> bin/<runner> bin/<binary> <game> <args>`. With
+`--no-runner`, `bundled.sh` skips that executable and starts the selected NWD
+binary directly. Nucore reads
 its own fixed `../config/pb2k.cfg`; explicit arguments remain last so they can
-override its values. The runner
-binary `execv()`s back into `bundled.sh`; the second entry is detected via the
+override its values. When enabled, the runner binary `execv()`s back into
+`bundled.sh`; the second entry is detected via the
 `_BUNDLED_BINARY` env var and finally exec's the real emulator through the
 bundled `ld-linux.so.2 --preload sigio_fix.so`. Its library path is an
 optional overlay followed by `bundlex86/direct:bundlex86/indirect`. Passing
@@ -1277,9 +1293,10 @@ launches we go through `run0` / `pkexec` / `sudo` instead.
 * `bundlex86/sdl12-compat/` — Debian 13 i386 `sdl12-compat` 1.2.68-3;
   checksum and full redistribution notices are included beside the binary
 * optional `bundlex86/optional/wayland-mesa-i386/` — the verified
-  `wayland-mesa-i386-v2` GitHub Release asset, downloaded only for native
-  SDL2 Wayland or KMSDRM; it includes SDL2 2.32.4 plus the EGL/GLES2/Mesa renderer, and
-  its DRI driver aliases share one Mesa binary
+  `wayland-mesa-i386-v3` GitHub Release asset, downloaded only for native
+  SDL2 Wayland or KMSDRM; it includes SDL2 2.32.4 plus the EGL/GLES2/Mesa
+  renderer, the complete i386 GL/udev bridge required by KMSDRM fallback
+  paths, and DRI driver aliases sharing one Mesa binary
 * `bundlex86/asix/libftchipid.so.0` — official ASIX i386 `libftchipid` 0.1.0;
   source URL, naming details and SHA-256 checksums are recorded in the adjacent
   `README.md`

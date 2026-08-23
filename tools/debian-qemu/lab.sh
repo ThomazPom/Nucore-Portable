@@ -209,6 +209,7 @@ expect {
 expect {
     -re {Enable Debian backports[^?]*\?} { send -- "y\r"; exp_continue }
     -re {Install them with APT[^?]*\?} { send -- "y\r"; exp_continue }
+    -re {Download and install the optional SDL2 graphics pack now[^?]*\?} { send -- "y\r"; exp_continue }
     eof {
         set result [wait]
         exit [lindex $result 3]
@@ -227,17 +228,17 @@ test_install() {
     copy_checkout
     enable_nonroot_escalation
     # User, trust writable checkout (not asked for root-owned /opt), config,
-    # game, Pinbox, watchdog, optional SDL/ASIX, fullscreen, bpp, maintenance,
+    # game, Pinbox, historical runner, optional SDL/ASIX, fullscreen, bpp, maintenance,
     # quiet boot, zero GRUB, proceed, and any backend package installation.
     case "$backend" in
-        console) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\n' ;;
-        kmsdrm) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n16\ny\ny\ny\ny\n' ;;
-        cage) answers=$'cabinet\n\nswe1_14\nn\ny\nn\ny\n32\ny\ny\ny\n' ;;
-        gamescope) answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\n' ;;
-        *)       answers=$'cabinet\n\nswe1_14\nn\ny\nn\nn\ny\n32\ny\ny\ny\n' ;;
+        console) answers=$'cabinet\n\nswe1_14\nn\nn\nn\ny\n16\ny\ny\ny\ny\n' ;;
+        kmsdrm) answers=$'cabinet\n\nswe1_14\nn\nn\nn\ny\n32\ny\ny\ny\ny\n' ;;
+        cage) answers=$'cabinet\n\nswe1_14\nn\nn\nn\ny\n32\ny\ny\ny\n' ;;
+        gamescope) answers=$'cabinet\n\nswe1_14\nn\nn\nn\nn\ny\n32\ny\ny\ny\n' ;;
+        *)       answers=$'cabinet\n\nswe1_14\nn\nn\nn\nn\ny\n32\ny\ny\ny\n' ;;
     esac
     install_as_cabinet "$backend" "$answers"
-    ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && test \"\$(getent passwd nucore-cabinet | cut -d: -f7)\" = /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-wm && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
+    ssh_guest "test -s /etc/nucore-portable/session.conf && test -s /etc/nucore-portable/launch.args && grep -qx -- --no-runner /etc/nucore-portable/launch.args && test -s /etc/systemd/system/nucore.service && test -s /etc/systemd/system/getty@tty1.service.d/49-nucore-portable.conf && test \"\$(getent passwd cabinet | cut -d: -f7)\" = /bin/bash && test \"\$(getent passwd nucore-cabinet | cut -d: -f7)\" = /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-cabinet-login && runuser -u nucore-cabinet -- test -x /usr/local/libexec/nucore-wm && systemctl is-enabled --quiet nucore.service && grep -qx BACKEND=$backend /etc/nucore-portable/session.conf"
     if [ "$backend" = gamescope ]; then
         ssh_guest "grep -qx 'Suites: trixie-backports' /etc/apt/sources.list.d/nucore-portable-backports.sources && apt-cache policy gamescope | grep -q trixie-backports"
     else
@@ -270,7 +271,7 @@ test_install() {
         ssh_guest 'grep -qw video=640x480 /proc/cmdline; test "$(cat /sys/class/graphics/fb0/virtual_size)" = 640,480; ! systemctl cat nucore.service | grep -q tty-force; for i in $(seq 1 100); do pid=$(pgrep -f "/bin/nucore " | head -n1); if [ -n "$pid" ] && readlink /proc/$pid/fd/* 2>/dev/null | grep -qx /dev/fb0; then exit 0; fi; sleep .1; done; exit 1'
     fi
     if [ "$backend" = kmsdrm ]; then
-        ssh_guest "grep -qx SDL12_COMPAT=1 /etc/nucore-portable/session.conf && grep -qx SDL_DISPLAY=kmsdrm /etc/nucore-portable/session.conf && grep -qx -- --kmsdrm /etc/nucore-portable/launch.args && grep -qx -- --console /etc/nucore-portable/launch.args"
+        ssh_guest "grep -qx SDL12_COMPAT=1 /etc/nucore-portable/session.conf && grep -qx SDL_DISPLAY=kmsdrm /etc/nucore-portable/session.conf && grep -qx -- --kmsdrm /etc/nucore-portable/launch.args && grep -qx -- --console /etc/nucore-portable/launch.args && grep -qx -- 32 /etc/nucore-portable/launch.args && test -z \"\$(dpkg --print-foreign-architectures)\" && journalctl -b -u nucore.service --no-pager | grep -q 'Pitch 2560 Depth 32 Width 640 Height 480' && ! journalctl -b -u nucore.service --no-pager | grep -Eq 'terminated by signal SEGV|Could not open SDL display'"
     fi
     # Reproduce uninstall from the post-game maintenance state. Keep a real
     # human tty1 login open: uninstall must remove only nucore-cabinet and must

@@ -101,7 +101,7 @@ if [ -z "$backend" ]; then
             gamescope) label=Gamescope ;; cage) label=Cage ;; weston) label=Weston ;;
             xorg) label=Xorg ;;
             console) label="Framebuffer — native SDL 1.2 / fbcon" ;;
-            kmsdrm) label="KMSDRM — SDL12-compat / SDL2 direct DRM" ;;
+            kmsdrm) label="KMSDRM — direct SDL2/DRM cabinet session" ;;
         esac
         printf '%d. %s\n' "$number" "$label"
     done
@@ -170,7 +170,10 @@ game=${game:-swe1_14}
 case "$game" in swe1|swe1_14) game=swe1_14;; rfm|rfm_15) game=rfm_15;; auto);; *) exit 2;; esac
 flags=""
 ask "Use Pinbox?" N && flags="$flags --pinbox"
-ask "Enable production watchdog?" Y || flags="$flags --no-reboot"
+echo
+echo "The historical runner monitors Nucore and may restart it or hard-reboot the machine after a failure."
+echo "Without it, Nucore Portable launches the no-watchdog binary directly; it can run normally and exits back to the configured maintenance path."
+ask "Use the historical runner?" N || flags="$flags --no-runner"
 sdl12_compat=0
 sdl_display=auto
 if [ "$backend" = cage ]; then
@@ -181,7 +184,7 @@ if [ "$backend" = cage ]; then
 elif [ "$backend" = console ]; then
     echo "Framebuffer uses the proven native SDL 1.2 fbcon path."
 elif [ "$backend" = kmsdrm ]; then
-    echo "KMSDRM is a direct-console SDL2 backend."
+    echo "KMSDRM is a direct fullscreen cabinet backend with no display server or compositor."
     echo "It automatically enables SDL12-compat and the required 32-bit graphics runtime."
     flags="$flags --sdl12-compat --kmsdrm"
     sdl12_compat=1
@@ -206,7 +209,7 @@ elif ask "Use SDL12-compat?" N; then
 fi
 ask "Use experimental ASIX libraries?" N && flags="$flags --asix"
 if ask "Start fullscreen?" Y; then video=-fullscreen; else video=-window; fi
-if [ "$backend" = console ] || [ "$backend" = kmsdrm ]; then default_bpp=16; else default_bpp=32; fi
+if [ "$backend" = console ]; then default_bpp=16; else default_bpp=32; fi
 read -r -p "Colour depth [$default_bpp] (16/32): " bpp; bpp=${bpp:-$default_bpp}
 case "$bpp" in 16|32);; *) echo "Expected 16 or 32" >&2; exit 2;; esac
 service_args="${flags# } $game $video -bpp $bpp"
@@ -279,22 +282,15 @@ cleanup_failed_install() {
 }
 trap cleanup_failed_install EXIT
 
+missing=()
+needs_graphics_pack=0
 if [ "$sdl12_compat" -eq 1 ] &&
    { [ "$sdl_display" = wayland ] || [ "$sdl_display" = kmsdrm ]; } &&
    ! "$ROOT/bin/wayland-mesa.sh" check; then
-    echo
-    echo "SDL2 $sdl_display needs the optional 32-bit Mesa rendering pack."
-    echo "It is excluded from the core repository because it expands to about 208 MiB."
-    echo "The verified 49 MiB archive comes from this project's GitHub Releases."
-    ask "Download and install the optional SDL2 graphics pack now?" Y || {
-        echo "Choose a hosted X11/Xwayland backend instead, or install it later with:" >&2
-        echo "  $ROOT/bin/wayland-mesa.sh install" >&2
-        exit 2
-    }
-    "$ROOT/bin/wayland-mesa.sh" install
+    needs_graphics_pack=1
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || missing+=(curl)
+    command -v xz >/dev/null 2>&1 || missing+=(xz-utils)
 fi
-
-missing=()
 # The cabinet lifecycle relies on logind inhibitors in every mode. The
 # display-manager overview adapter additionally uses busctl and setpriv; both
 # are ordinary systemd/util-linux infrastructure, not project daemons.
@@ -448,6 +444,19 @@ EOF
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             -t "$backports_suite" gamescope
     fi
+fi
+
+if [ "$needs_graphics_pack" -eq 1 ]; then
+    echo
+    echo "SDL2 $sdl_display needs the optional 32-bit Mesa rendering pack."
+    echo "It is excluded from the core repository because it expands to about 211 MiB."
+    echo "The verified 50 MiB archive comes from this project's GitHub Releases."
+    ask "Download and install the optional SDL2 graphics pack now?" Y || {
+        echo "Choose a hosted X11/Xwayland backend instead, or install it later with:" >&2
+        echo "  $ROOT/bin/wayland-mesa.sh install" >&2
+        exit 2
+    }
+    "$ROOT/bin/wayland-mesa.sh" install
 fi
 
 session_user=$owner_user

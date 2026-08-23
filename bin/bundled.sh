@@ -42,6 +42,7 @@ set_library_path() {
                 fi
                 LIBPATH="$WAYLAND_MESA/indirect:$LIBPATH"
                 export LIBGL_DRIVERS_PATH="${LIBGL_DRIVERS_PATH:-$WAYLAND_MESA/dri}"
+                export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-$WAYLAND_MESA/egl_vendor.d/50_mesa.json}"
             fi
             ;;
     esac
@@ -169,7 +170,6 @@ case "$SDL_DISPLAY" in
         }
         unset DISPLAY XAUTHORITY WAYLAND_DISPLAY
         export SDL_VIDEODRIVER=KMSDRM
-        export SDL_RENDER_DRIVER="${SDL_RENDER_DRIVER:-opengles2}"
         ;;
 esac
 
