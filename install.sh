@@ -13,6 +13,7 @@ CABINET_USER=nucore-cabinet
 CABINET_HOME=/var/lib/nucore-cabinet
 CABINET_SHELL=/usr/local/libexec/nucore-cabinet-login
 CABINET_WM=/usr/local/libexec/nucore-wm
+CABINET_LOCK=/var/lib/pinball2000-cabinet.lock
 
 ask() {
     local prompt=$1 default=$2 answer
@@ -60,6 +61,11 @@ esac
 if [ -f "$STATE/install-mode" ]; then
     echo "install.sh: an existing cabinet integration is installed." >&2
     echo "Run ./uninstall.sh first, then run ./install.sh again." >&2
+    exit 2
+fi
+if [ -e "$CABINET_LOCK" ]; then
+    LOCK_OWNER=$(sed -n '1p' "$CABINET_LOCK" 2>/dev/null || true)
+    echo "install.sh: a ${LOCK_OWNER:-unknown} cabinet integration is installed; uninstall it first." >&2
     exit 2
 fi
 
@@ -704,5 +710,6 @@ fi
 
 echo
 echo "Installed: $session_user PAM/logind session -> $backend -> root nucore.service"
+printf '%s\n' nucore > "$CABINET_LOCK"
 echo "Next boot will use the new cabinet session architecture."
 echo "Logs: journalctl -u nucore -f"

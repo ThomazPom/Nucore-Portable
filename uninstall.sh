@@ -26,12 +26,18 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo "[+] stopping & disabling nucore.service"
 STATE_DIR=/var/lib/nucore-portable
 GRUB_DROPIN=/etc/default/grub.d/99-nucore-portable.cfg
 GRUB_QUIET_SCRIPT=/etc/grub.d/01_nucore_portable_quiet
 BACKPORTS_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-backports.sources
 LEGACY_GAMESCOPE_APT_SOURCE=/etc/apt/sources.list.d/nucore-portable-gamescope.sources
+CABINET_LOCK=/var/lib/pinball2000-cabinet.lock
+LOCK_OWNER=$(sed -n '1p' "$CABINET_LOCK" 2>/dev/null || true)
+if [ "$LOCK_OWNER" != nucore ]; then
+    echo "uninstall.sh: cabinet lock belongs to '${LOCK_OWNER:-nobody}', not nucore; nothing changed." >&2
+    exit 2
+fi
+echo "[+] stopping & disabling nucore.service"
 INSTALL_MODE=""
 [ -f "$STATE_DIR/install-mode" ] && INSTALL_MODE=$(sed -n '1p' "$STATE_DIR/install-mode")
 CABINET_USER=""
@@ -233,6 +239,9 @@ rm -f "$STATE_DIR/install-mode" \
       "$STATE_DIR/cabinet-user-created" \
       "$STATE_DIR/hushlogin-created"
 rmdir "$STATE_DIR" 2>/dev/null || true
+if [ "$(sed -n '1p' "$CABINET_LOCK" 2>/dev/null || true)" = nucore ]; then
+    rm -f "$CABINET_LOCK"
+fi
 
 echo "=== uninstall complete ==="
 echo "All project-owned system changes made by install.sh were removed."
