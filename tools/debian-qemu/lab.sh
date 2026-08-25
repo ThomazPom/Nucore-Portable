@@ -17,6 +17,7 @@ if [ -n "$HOST_VARIANT" ]; then HOST_KEYMAP="$HOST_LAYOUT($HOST_VARIANT)"; else 
 BASE_TAG=$(printf '%s-%s-%s' "$HOST_LOCALE" "$HOST_LAYOUT" "${HOST_VARIANT:-default}" | tr -cs 'A-Za-z0-9._-' _)
 BASE=$LAB_DIR/debian13-minimal-$BASE_TAG.qcow2
 OVERLAY=$LAB_DIR/current.qcow2
+CHECKOUT_PENDING=$LAB_DIR/current.checkout-pending
 PIDFILE=$LAB_DIR/qemu.pid
 LOG=$LAB_DIR/serial.log
 SSH_PORT=${NUCORE_QEMU_SSH_PORT:-22222}
@@ -93,7 +94,7 @@ start_overlay() {
     else
         qemu-system-x86_64 -display help 2>&1 | grep -qx gtk ||
             die "QEMU GTK display unavailable (install qemu-system-gui, or set NUCORE_QEMU_HEADLESS=1)"
-        display=(-display gtk,zoom-to-fit=on,show-tabs=off)
+        display=(-display gtk,zoom-to-fit=off,show-tabs=off)
     fi
     qemu-system-x86_64 "${accel[@]}" -machine q35 \
         -m "$RAM" -smp "$CPUS" -drive "file=$OVERLAY,if=virtio,format=qcow2" \
@@ -154,15 +155,26 @@ reset_overlay() {
     [ -f "$BASE" ] || die "base missing; run '$0 prepare'"
     rm -f "$OVERLAY"
     qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$OVERLAY"
+    : > "$CHECKOUT_PENDING"
     echo "Fresh overlay: $OVERLAY"
 }
 
 copy_checkout() {
+    local host_start_sha host_install_sha guest_hashes
+    host_start_sha=$(sha256sum "$REPO_ROOT/start.sh" | awk '{print $1}')
+    host_install_sha=$(sha256sum "$REPO_ROOT/install.sh" | awk '{print $1}')
     # Preserve the exact worktree under test, excluding Git metadata and game
     # save mutations. Root extracts it, preserving the installer's boundary.
     tar -C "$REPO_ROOT" --exclude=.git --exclude='roms/savedata/*' -cf - . |
         ssh_guest "rm -rf /opt/Nucore-Portable && mkdir -p /opt/Nucore-Portable && tar -C /opt/Nucore-Portable -xf - && chown -R root:root /opt/Nucore-Portable"
-    ssh_guest 'ln -sfn /opt/Nucore-Portable /home/cabinet/Nucore-Portable && chown -h cabinet:cabinet /home/cabinet/Nucore-Portable'
+    # Replace a real directory as well as an old link. Plain `ln -sfn` would
+    # otherwise create the new link inside an existing directory.
+    ssh_guest 'rm -rf /home/cabinet/Nucore-Portable && ln -s /opt/Nucore-Portable /home/cabinet/Nucore-Portable && chown -h cabinet:cabinet /home/cabinet/Nucore-Portable'
+    guest_hashes=$(ssh_guest 'sha256sum /opt/Nucore-Portable/start.sh /opt/Nucore-Portable/install.sh | awk '\''{print $1}'\''')
+    [[ "$guest_hashes" == "$host_start_sha"$'\n'"$host_install_sha" ]] ||
+        die "guest checkout differs from the current host worktree"
+    rm -f "$CHECKOUT_PENDING"
+    echo "Copied current checkout (launcher ${host_start_sha:0:12})."
 }
 
 assert_stripped_guest() {
@@ -287,11 +299,12 @@ test_install() {
 }
 
 manual_vm() {
-    reset_overlay
+    [[ -f "$OVERLAY" ]] || die "no overlay; run '$0 reset' first"
     start_overlay
-    assert_stripped_guest
-    copy_checkout
-    enable_nonroot_escalation
+    if [[ -e "$CHECKOUT_PENDING" ]]; then
+        copy_checkout
+        enable_nonroot_escalation
+    fi
     cat <<EOF
 
 Manual stripped-Debian VM is ready in the 800x600 QEMU window.
@@ -300,8 +313,8 @@ Login: cabinet / cabinet
   cd ~/Nucore-Portable
   ./install.sh
 
-The first password prompt is run0/pkttyagent authentication. The base image is
-untouched; discard this experiment with: $0 reset
+The overlay and its guest worktree are preserved across manual boots. Start a
+fresh experiment, with the current host checkout, using: $0 reset
 EOF
 }
 
